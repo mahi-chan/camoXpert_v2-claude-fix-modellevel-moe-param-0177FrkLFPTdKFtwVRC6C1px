@@ -1,0 +1,27 @@
+# config.yaml
+seed: 42
+deterministic: true
+
+paths:
+  root_dir: /kaggle/working
+  data_dir: /kaggle/input/cod10k-v3
+  checkpoint_dir: /kaggle/working/checkpoints
+  results_dir: /kaggle/working/results
+  figures_dir: /kaggle/working/figures
+
+device:
+  type: cuda
+  num_workers: 2
+  pin_memory: true
+  mixed_precision: true
+
+dataset:
+  img_size: 352
+  num_classes: 1
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+inference:
+  confidence_threshold: 0.5
+  nms_threshold: 0.5
