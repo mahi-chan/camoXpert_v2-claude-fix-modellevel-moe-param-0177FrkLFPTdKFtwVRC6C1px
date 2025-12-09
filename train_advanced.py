@@ -49,7 +49,15 @@ from losses.composite_loss import CompositeLossSystem
 from losses import CombinedLoss  # OLD: Anti-under-segmentation loss
 from losses.boundary_aware_loss import CombinedEnhancedLoss  # NEW: Enhanced loss with TDD/GAD/BPN
 from utils.ema import EMA  # NEW: Exponential Moving Average
-from data.dataset import COD10KDataset
+try:
+    from dataset_updated import COD10KDataset
+except ImportError:
+    # Fallback if in a subdirectory or running differently
+    try:
+        from data.dataset_updated import COD10KDataset
+    except ImportError:
+        from data.dataset import COD10KDataset
+        print("WARNING: Using original dataset.py (dataset_updated not found)")
 from metrics.cod_metrics import CODMetrics
 from models.model_level_moe import ModelLevelMoE
 from models.utils import set_seed
@@ -65,7 +73,7 @@ def parse_args():
                         help='Path to COD10K-v3 dataset')
     parser.add_argument('--batch-size', type=int, default=8,
                         help='Batch size per GPU')
-    parser.add_argument('--img-size', type=int, default=352,
+    parser.add_argument('--img-size', type=int, default=512,
                         help='Input image size')
     parser.add_argument('--num-workers', type=int, default=4,
                         help='DataLoader workers')
