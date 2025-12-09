@@ -189,20 +189,33 @@ def load_checkpoint(
             new_state_dict[k] = v
     
     # Auto-detect num_experts from checkpoint
+    # Look for the FINAL layer in decision_network (largest index with small output dim)
     if num_experts is None:
-        for key in new_state_dict.keys():
-            if 'router.decision_network' in key and 'weight' in key:
-                if new_state_dict[key].dim() == 2:
-                    num_experts = new_state_dict[key].shape[0]
-                    print(f"✓ Auto-detected {num_experts} experts")
-                    break
+        # Find all decision_network weight layers and get the one with smallest output (that's num_experts)
+        decision_layers = {}
+        for key, value in new_state_dict.items():
+            if 'router.decision_network' in key and 'weight' in key and value.dim() == 2:
+                # Extract layer index (e.g., "router.decision_network.11.weight" -> 11)
+                parts = key.split('.')
+                for i, p in enumerate(parts):
+                    if p == 'decision_network' and i+1 < len(parts):
+                        try:
+                            layer_idx = int(parts[i+1])
+                            decision_layers[layer_idx] = value.shape[0]
+                        except ValueError:
+                            pass
         
-        if num_experts is None:
+        if decision_layers:
+            # Find the layer with smallest output (that's the num_experts output layer)
+            final_layer_idx = max(decision_layers.keys())
+            num_experts = decision_layers[final_layer_idx]
+            print(f"✓ Auto-detected {num_experts} experts from layer {final_layer_idx}")
+        else:
             # Default fallback
             num_experts = 3
             print(f"⚠ Could not detect num_experts, using default: {num_experts}")
     
-    # Create model
+    # Create model with matching architecture
     model = ModelLevelMoE(
         backbone_name=backbone,
         num_experts=num_experts,
@@ -210,8 +223,17 @@ def load_checkpoint(
         pretrained=False
     )
     
-    # Load state dict
-    model.load_state_dict(new_state_dict, strict=False)
+    # Load state dict with strict=False to allow minor mismatches, then verify
+    missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
+    
+    # Check for critical mismatches
+    critical_missing = [k for k in missing_keys if 'router' in k or 'expert' in k]
+    if critical_missing:
+        print(f"⚠ Missing critical keys: {critical_missing[:5]}...")
+    
+    if unexpected_keys:
+        print(f"  Note: {len(unexpected_keys)} unexpected keys in checkpoint (will be ignored)")
+    
     model = model.to(device)
     model.eval()
     
