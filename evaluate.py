@@ -58,14 +58,21 @@ class EvalDataset(Dataset):
         self.img_size = img_size
         self.dataset_name = dataset_name
         
-        # Try different directory structures
+        # Try different directory structures (common COD dataset layouts)
         possible_structures = [
+            # Standard COD10K structure
             {'img': 'Test/Image', 'gt': 'Test/GT_Object'},
             {'img': 'Test/Imgs', 'gt': 'Test/GT'},
             {'img': 'Test/image', 'gt': 'Test/mask'},
-            {'img': 'image', 'gt': 'mask'},
+            # CAMO dataset structure (no Test subfolder)
+            {'img': 'Images', 'gt': 'GT'},
             {'img': 'Image', 'gt': 'GT'},
             {'img': 'Imgs', 'gt': 'GT'},
+            # Other common structures
+            {'img': 'image', 'gt': 'mask'},
+            {'img': 'Image', 'gt': 'GT_Object'},
+            {'img': 'images', 'gt': 'masks'},
+            {'img': 'img', 'gt': 'gt'},
         ]
         
         self.image_dir = None
