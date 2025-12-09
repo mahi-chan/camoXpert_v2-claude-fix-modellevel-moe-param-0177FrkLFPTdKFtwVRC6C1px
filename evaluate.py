@@ -64,7 +64,8 @@ class EvalDataset(Dataset):
             {'img': 'Test/Image', 'gt': 'Test/GT_Object'},
             {'img': 'Test/Imgs', 'gt': 'Test/GT'},
             {'img': 'Test/image', 'gt': 'Test/mask'},
-            # CAMO dataset structure (no Test subfolder)
+            # CAMO dataset structure (Images/Test, GT/Test)
+            {'img': 'Images/Test', 'gt': 'GT/Test'},
             {'img': 'Images', 'gt': 'GT'},
             {'img': 'Image', 'gt': 'GT'},
             {'img': 'Imgs', 'gt': 'GT'},
