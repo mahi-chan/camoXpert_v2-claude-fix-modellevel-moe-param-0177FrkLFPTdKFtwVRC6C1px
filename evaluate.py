@@ -52,46 +52,53 @@ class EvalDataset(Dataset):
         self,
         root_dir: str,
         img_size: int = 352,
-        dataset_name: str = "unknown"
+        dataset_name: str = "unknown",
+        image_dir: Optional[str] = None,
+        gt_dir: Optional[str] = None
     ):
         self.root_dir = Path(root_dir)
         self.img_size = img_size
         self.dataset_name = dataset_name
         
-        # Try different directory structures (common COD dataset layouts)
-        possible_structures = [
-            # Standard COD10K structure
-            {'img': 'Test/Image', 'gt': 'Test/GT_Object'},
-            {'img': 'Test/Imgs', 'gt': 'Test/GT'},
-            {'img': 'Test/image', 'gt': 'Test/mask'},
-            # CAMO dataset structure (Images/Test, GT/Test)
-            {'img': 'Images/Test', 'gt': 'GT/Test'},
-            {'img': 'Images', 'gt': 'GT'},
-            {'img': 'Image', 'gt': 'GT'},
-            {'img': 'Imgs', 'gt': 'GT'},
-            # Other common structures
-            {'img': 'image', 'gt': 'mask'},
-            {'img': 'Image', 'gt': 'GT_Object'},
-            {'img': 'images', 'gt': 'masks'},
-            {'img': 'img', 'gt': 'gt'},
-        ]
-        
-        self.image_dir = None
-        self.gt_dir = None
-        
-        for struct in possible_structures:
-            img_path = self.root_dir / struct['img']
-            gt_path = self.root_dir / struct['gt']
-            if img_path.exists() and gt_path.exists():
-                self.image_dir = img_path
-                self.gt_dir = gt_path
-                break
-        
-        if self.image_dir is None:
-            raise FileNotFoundError(
-                f"Could not find valid dataset structure in {root_dir}\n"
-                f"Available directories: {list(self.root_dir.iterdir()) if self.root_dir.exists() else 'N/A'}"
-            )
+        # If explicit paths provided, use them directly
+        if image_dir and gt_dir:
+            self.image_dir = Path(image_dir)
+            self.gt_dir = Path(gt_dir)
+        else:
+            # Try different directory structures (common COD dataset layouts)
+            possible_structures = [
+                # Standard COD10K structure
+                {'img': 'Test/Image', 'gt': 'Test/GT_Object'},
+                {'img': 'Test/Imgs', 'gt': 'Test/GT'},
+                {'img': 'Test/image', 'gt': 'Test/mask'},
+                # CAMO dataset structure (Images/Test, GT/Test)
+                {'img': 'Images/Test', 'gt': 'GT/Test'},
+                {'img': 'Images', 'gt': 'GT'},
+                {'img': 'Image', 'gt': 'GT'},
+                {'img': 'Imgs', 'gt': 'GT'},
+                # Other common structures
+                {'img': 'image', 'gt': 'mask'},
+                {'img': 'Image', 'gt': 'GT_Object'},
+                {'img': 'images', 'gt': 'masks'},
+                {'img': 'img', 'gt': 'gt'},
+            ]
+            
+            self.image_dir = None
+            self.gt_dir = None
+            
+            for struct in possible_structures:
+                img_path = self.root_dir / struct['img']
+                gt_path = self.root_dir / struct['gt']
+                if img_path.exists() and gt_path.exists():
+                    self.image_dir = img_path
+                    self.gt_dir = gt_path
+                    break
+            
+            if self.image_dir is None:
+                raise FileNotFoundError(
+                    f"Could not find valid dataset structure in {root_dir}\n"
+                    f"Available directories: {list(self.root_dir.iterdir()) if self.root_dir.exists() else 'N/A'}"
+                )
         
         # Get image list
         self.image_list = sorted([
@@ -542,6 +549,12 @@ def main():
     parser.add_argument('--num-experts', type=int, default=None,
                         help='Number of experts (auto-detected if not specified)')
     
+    # Explicit path specification (for non-standard datasets like CAMO)
+    parser.add_argument('--image-dir', type=str, default=None,
+                        help='Explicit path to images folder (bypasses auto-detection)')
+    parser.add_argument('--gt-dir', type=str, default=None,
+                        help='Explicit path to ground truth folder (bypasses auto-detection)')
+    
     # Device
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
@@ -592,7 +605,9 @@ def main():
             dataset = EvalDataset(
                 root_dir=str(dataset_path),
                 img_size=args.img_size,
-                dataset_name=dataset_name
+                dataset_name=dataset_name,
+                image_dir=args.image_dir,
+                gt_dir=args.gt_dir
             )
             
             # Create output directory for this dataset
