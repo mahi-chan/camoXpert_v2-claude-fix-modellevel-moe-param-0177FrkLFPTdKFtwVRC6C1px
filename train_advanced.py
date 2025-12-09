@@ -61,8 +61,8 @@ except ImportError:
 from metrics.cod_metrics import CODMetrics
 from models.model_level_moe import ModelLevelMoE
 from models.utils import set_seed
-# from models.multi_scale_processor import MultiScaleInputProcessor  # UNUSED
-# from models.boundary_refinement import BoundaryRefinementModule  # UNUSED
+from models.multi_scale_processor import MultiScaleInputProcessor
+from models.boundary_refinement import BoundaryRefinementModule
 
 
 def parse_args():
