@@ -127,8 +127,14 @@ class ModelLevelMoE(nn.Module):
                 backbone_name,
                 pretrained=pretrained,
                 features_only=True,
-                out_indices=(0, 1, 2, 3)
+                out_indices=(0, 1, 2, 3),
+                # scriptable=False,  # Optimization for memory
+                # exportable=False,
+                # no_jit=True
             )
+            # Enable gradient checkpointing if available (saves VRAM)
+            if hasattr(backbone, 'set_grad_checkpointing'):
+                backbone.set_grad_checkpointing(enable=True)
         except Exception as e:
             raise ValueError(f"Failed to create backbone '{backbone_name}': {e}")
 
