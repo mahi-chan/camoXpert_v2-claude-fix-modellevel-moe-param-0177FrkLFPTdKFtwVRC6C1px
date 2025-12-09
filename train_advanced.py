@@ -47,8 +47,9 @@ from pathlib import Path
 from trainers.optimized_trainer import OptimizedTrainer
 from losses.composite_loss import CompositeLossSystem
 from losses import CombinedLoss  # OLD: Anti-under-segmentation loss
-from losses.boundary_aware_loss import CombinedEnhancedLoss  # NEW: Enhanced loss with TDD/GAD/BPN
-from utils.ema import EMA  # NEW: Exponential Moving Average
+from losses.boundary_aware_loss import CombinedEnhancedLoss  # Enhanced loss with TDD/GAD/BPN
+from losses.sota_loss import SOTALoss, SOTALossWithTversky  # NEW: SOTA-aligned loss for generalization
+from utils.ema import EMA  # Exponential Moving Average
 try:
     from dataset_updated import COD10KDataset
 except ImportError:
@@ -134,8 +135,12 @@ def parse_args():
                         help='Number of epochs to keep router frozen (default: 5)')
 
     # Loss Function Selection
+    parser.add_argument('--loss-type', type=str, default='sota',
+                        choices=['sota', 'sota-tversky', 'combined', 'composite'],
+                        help='Loss function: sota (BCE+IoU+Structure), sota-tversky (for under-segmentation), '
+                             'combined (5-loss), composite (old default)')
     parser.add_argument('--use-combined-loss', action='store_true',
-                        help='Use new CombinedLoss (Tversky+Focal+Boundary+SSIM+Dice) to fix under-segmentation')
+                        help='[DEPRECATED] Use --loss-type=combined instead')
 
     # CompositeLoss settings (default loss function)
     parser.add_argument('--loss-scheme', type=str, default='progressive',
@@ -420,7 +425,7 @@ def create_model(args, device, is_main_process):
 
 
 def create_optimizer_and_criterion(model, args, is_main_process):
-    """Create optimizer and simple structure loss."""
+    """Create optimizer and loss function."""
 
     optimizer = AdamW(
         model.parameters(),
@@ -429,13 +434,60 @@ def create_optimizer_and_criterion(model, args, is_main_process):
         betas=(0.9, 0.999)
     )
 
-    # Simple loss with label smoothing
-    from losses.composite_loss import CompositeLossSystem
-    criterion = CompositeLossSystem(label_smoothing=0.1)
+    # Handle deprecated --use-combined-loss flag
+    loss_type = args.loss_type
+    if args.use_combined_loss:
+        loss_type = 'combined'
+        if is_main_process:
+            print("⚠️ --use-combined-loss is deprecated, use --loss-type=combined")
+
+    # Select loss function based on type
+    if loss_type == 'sota':
+        # RECOMMENDED: SOTA-aligned loss (BCE + IoU + Structure)
+        criterion = SOTALoss(
+            bce_weight=1.0,
+            iou_weight=1.0,
+            structure_weight=0.5,
+            pos_weight=args.pos_weight,
+            aux_weight=0.1,
+            deep_weight=0.4
+        )
+        loss_name = "SOTALoss (BCE+IoU+Structure)"
+
+    elif loss_type == 'sota-tversky':
+        # For under-segmentation issues
+        criterion = SOTALossWithTversky(
+            bce_weight=1.0,
+            tversky_weight=1.0,
+            structure_weight=0.5,
+            pos_weight=args.pos_weight,
+            alpha=args.tversky_alpha,
+            beta=args.tversky_beta,
+            aux_weight=0.1,
+            deep_weight=0.4
+        )
+        loss_name = f"SOTALossWithTversky (alpha={args.tversky_alpha}, beta={args.tversky_beta})"
+
+    elif loss_type == 'combined':
+        # Old 5-loss combo (over-engineered but available)
+        criterion = CombinedLoss(
+            focal_weight=args.focal_weight,
+            tversky_weight=args.tversky_weight,
+            boundary_weight=args.combined_boundary_weight,
+            ssim_weight=args.ssim_weight,
+            dice_weight=args.dice_weight,
+            pos_weight=args.pos_weight
+        )
+        loss_name = "CombinedLoss (5-loss combo)"
+
+    else:  # composite
+        # Original loss with label smoothing
+        criterion = CompositeLossSystem(label_smoothing=0.1)
+        loss_name = "CompositeLossSystem (label_smoothing=0.1)"
 
     if is_main_process:
         print(f"✓ Optimizer: AdamW (lr={args.lr}, wd={args.weight_decay})")
-        print(f"✓ Loss: Simple Structure Loss with label_smoothing=0.1")
+        print(f"✓ Loss: {loss_name}")
 
     return optimizer, criterion
 

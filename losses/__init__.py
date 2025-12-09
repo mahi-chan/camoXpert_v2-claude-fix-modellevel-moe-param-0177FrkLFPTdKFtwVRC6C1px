@@ -8,6 +8,7 @@ from .combined_loss import (
     SSIMLoss,
     CombinedLoss
 )
+from .sota_loss import SOTALoss, SOTALossWithTversky
 
 __all__ = [
     'CamoXpertLoss',
@@ -17,5 +18,7 @@ __all__ = [
     'TverskyLoss',
     'BoundaryLoss',
     'SSIMLoss',
-    'CombinedLoss'
+    'CombinedLoss',
+    'SOTALoss',
+    'SOTALossWithTversky'
 ]
