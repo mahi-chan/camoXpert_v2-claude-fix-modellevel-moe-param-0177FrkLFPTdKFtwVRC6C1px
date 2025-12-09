@@ -218,6 +218,12 @@ def parse_args():
                         help='Enable boundary refinement module')
     parser.add_argument('--boundary-feature-channels', type=int, default=64,
                         help='Feature channels for boundary refinement (default: 64)')
+    
+    # TDD/GAD Modules (for testing generalization)
+    parser.add_argument('--use-tdd', action='store_true', default=False,
+                        help='Use Texture Discontinuity Detection module')
+    parser.add_argument('--use-gad', action='store_true', default=False,
+                        help='Use Gradient Anomaly Detection module')
     parser.add_argument('--gradient-loss-weight', type=float, default=0.5,
                         help='Weight for gradient supervision loss (default: 0.5)')
     parser.add_argument('--sdt-loss-weight', type=float, default=1.0,

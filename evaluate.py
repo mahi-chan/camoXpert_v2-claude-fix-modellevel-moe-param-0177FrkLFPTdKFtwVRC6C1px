@@ -38,6 +38,113 @@ from metrics.cod_metrics import CODMetrics
 
 
 # ============================================================================
+# TTA (Test-Time Augmentation) Functions
+# ============================================================================
+
+def tta_inference(model, images: torch.Tensor, scales: List[float] = [0.75, 1.0, 1.25], 
+                  use_flip: bool = True) -> torch.Tensor:
+    """
+    Perform Test-Time Augmentation inference.
+    
+    Args:
+        model: The model to use for inference
+        images: Input images [B, C, H, W]
+        scales: List of scales for multi-scale inference
+        use_flip: Whether to use horizontal flip augmentation
+    
+    Returns:
+        Averaged predictions [B, 1, H, W] (after sigmoid)
+    """
+    B, C, H, W = images.shape
+    all_preds = []
+    
+    for scale in scales:
+        # Resize for this scale
+        new_h, new_w = int(H * scale), int(W * scale)
+        scaled_images = F.interpolate(images, size=(new_h, new_w), mode='bilinear', align_corners=False)
+        
+        # Forward pass
+        output = model(scaled_images)
+        if isinstance(output, dict):
+            preds = output.get('pred', output.get('predictions', None))
+        elif isinstance(output, (tuple, list)):
+            preds = output[0]
+        else:
+            preds = output
+        
+        # Resize back to original size
+        preds = F.interpolate(preds, size=(H, W), mode='bilinear', align_corners=False)
+        all_preds.append(preds)
+        
+        # Horizontal flip
+        if use_flip:
+            flipped = torch.flip(scaled_images, dims=[3])
+            output = model(flipped)
+            if isinstance(output, dict):
+                preds_flip = output.get('pred', output.get('predictions', None))
+            elif isinstance(output, (tuple, list)):
+                preds_flip = output[0]
+            else:
+                preds_flip = output
+            
+            # Flip back and resize
+            preds_flip = torch.flip(preds_flip, dims=[3])
+            preds_flip = F.interpolate(preds_flip, size=(H, W), mode='bilinear', align_corners=False)
+            all_preds.append(preds_flip)
+    
+    # Average all predictions
+    avg_preds = torch.stack(all_preds, dim=0).mean(dim=0)
+    return torch.sigmoid(avg_preds)
+
+
+def apply_crf(image_np: np.ndarray, pred_np: np.ndarray, 
+              n_iters: int = 5, sxy: int = 80, srgb: int = 13) -> np.ndarray:
+    """
+    Apply CRF post-processing to refine predictions.
+    
+    Args:
+        image_np: Original image [H, W, 3] (uint8, RGB)
+        pred_np: Prediction probability map [H, W] (float, 0-1)
+        n_iters: Number of CRF iterations
+        sxy: Spatial standard deviation
+        srgb: Color standard deviation
+    
+    Returns:
+        Refined prediction [H, W] (float, 0-1)
+    """
+    try:
+        import pydensecrf.densecrf as dcrf
+        from pydensecrf.utils import unary_from_softmax
+    except ImportError:
+        print("Warning: pydensecrf not installed. Skipping CRF. Install with: pip install pydensecrf")
+        return pred_np
+    
+    H, W = pred_np.shape
+    
+    # Create 2-class unary potentials
+    probs = np.stack([1 - pred_np, pred_np], axis=0)  # [2, H, W]
+    unary = unary_from_softmax(probs)
+    unary = np.ascontiguousarray(unary)
+    
+    # Create CRF
+    d = dcrf.DenseCRF2D(W, H, 2)
+    d.setUnaryEnergy(unary)
+    
+    # Add pairwise energy (appearance + smoothness)
+    d.addPairwiseGaussian(sxy=3, compat=3)  # Smoothness
+    d.addPairwiseBilateral(
+        sxy=sxy, srgb=srgb, rgbim=image_np.astype(np.uint8),
+        compat=10
+    )
+    
+    # Inference
+    Q = d.inference(n_iters)
+    result = np.array(Q).reshape((2, H, W))
+    
+    return result[1]  # Return foreground probability
+
+
+# ============================================================================
 # Dataset Classes
 # ============================================================================
 
@@ -346,14 +453,32 @@ def evaluate_dataset(
     device: str,
     batch_size: int = 1,
     save_predictions: bool = False,
-    output_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None,
+    use_tta: bool = False,
+    tta_scales: List[float] = [0.75, 1.0, 1.25],
+    use_crf: bool = False
 ) -> Tuple[Dict[str, float], List[Dict]]:
     """
     Evaluate model on a dataset.
     
+    Args:
+        model: The model to evaluate
+        dataset: Dataset to evaluate on
+        device: Device to use
+        batch_size: Batch size (forced to 1 if using CRF)
+        save_predictions: Whether to save prediction masks
+        output_dir: Output directory for predictions
+        use_tta: Use Test-Time Augmentation
+        tta_scales: Scales for TTA
+        use_crf: Use CRF post-processing
+    
     Returns:
         (overall_metrics, per_image_results)
     """
+    # Force batch_size=1 for CRF (needs original image)
+    if use_crf:
+        batch_size = 1
+    
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -386,19 +511,23 @@ def evaluate_dataset(
             
             # Inference with timing
             start_time = time.time()
-            output = model(images)
+            
+            if use_tta:
+                # TTA inference (already applies sigmoid)
+                preds = tta_inference(model, images, scales=tta_scales, use_flip=True)
+            else:
+                # Standard inference
+                output = model(images)
+                if isinstance(output, dict):
+                    preds = output.get('pred', output.get('predictions', None))
+                elif isinstance(output, (tuple, list)):
+                    preds = output[0]
+                else:
+                    preds = output
+                preds = torch.sigmoid(preds)
+            
             inference_time = time.time() - start_time
             total_inference_time += inference_time
-            
-            # Extract predictions
-            if isinstance(output, dict):
-                preds = output.get('pred', output.get('predictions', None))
-            elif isinstance(output, (tuple, list)):
-                preds = output[0]
-            else:
-                preds = output
-            
-            preds = torch.sigmoid(preds)
             
             # Process each image in batch
             for i in range(images.size(0)):
@@ -406,6 +535,19 @@ def evaluate_dataset(
                 gt = gts[i:i+1]
                 name = names[i]
                 orig_w, orig_h = original_sizes[0][i].item(), original_sizes[1][i].item()
+                
+                # Apply CRF post-processing if enabled
+                if use_crf:
+                    # Get original image for CRF (denormalize)
+                    img_tensor = images[i].cpu()
+                    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+                    img_denorm = img_tensor * std + mean
+                    img_np = (img_denorm.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                    
+                    pred_np = pred.squeeze().cpu().numpy()
+                    pred_refined = apply_crf(img_np, pred_np)
+                    pred = torch.from_numpy(pred_refined).unsqueeze(0).unsqueeze(0).to(device)
                 
                 # Compute metrics
                 image_metrics = evaluate_single_image(pred, gt, metrics_calculator)
@@ -426,7 +568,7 @@ def evaluate_dataset(
                         mode='bilinear', align_corners=False
                     )
                     pred_np = (pred_resized.squeeze().cpu().numpy() * 255).astype(np.uint8)
-                    pred_img = Image.fromarray(pred_np, mode='L')
+                    pred_img = Image.fromarray(pred_np)
                     pred_img.save(pred_dir / f"{name}.png")
     
     # Compute averages
@@ -555,6 +697,16 @@ def main():
     parser.add_argument('--gt-dir', type=str, default=None,
                         help='Explicit path to ground truth folder (bypasses auto-detection)')
     
+    # Test-Time Augmentation (TTA)
+    parser.add_argument('--use-tta', action='store_true',
+                        help='Use Test-Time Augmentation (multi-scale + flip)')
+    parser.add_argument('--tta-scales', nargs='+', type=float, default=[0.75, 1.0, 1.25],
+                        help='Scales for TTA (default: 0.75 1.0 1.25)')
+    
+    # CRF Post-Processing
+    parser.add_argument('--use-crf', action='store_true',
+                        help='Use CRF post-processing (requires pydensecrf)')
+    
     # Device
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
@@ -576,6 +728,8 @@ def main():
     print(f"Image size: {args.img_size}")
     print(f"Batch size: {args.batch_size}")
     print(f"Save predictions: {args.save_predictions}")
+    print(f"TTA (Test-Time Aug): {args.use_tta} {'(scales: ' + str(args.tta_scales) + ')' if args.use_tta else ''}")
+    print(f"CRF post-process: {args.use_crf}")
     print(f"Device: {device}")
     
     # Load model
@@ -622,7 +776,10 @@ def main():
                 device=device,
                 batch_size=args.batch_size,
                 save_predictions=args.save_predictions,
-                output_dir=dataset_output_dir
+                output_dir=dataset_output_dir,
+                use_tta=args.use_tta,
+                tta_scales=args.tta_scales,
+                use_crf=args.use_crf
             )
             
             all_results[dataset_name] = overall_metrics

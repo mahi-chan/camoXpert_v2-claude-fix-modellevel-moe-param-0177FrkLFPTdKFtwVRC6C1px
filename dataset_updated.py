@@ -156,14 +156,26 @@ class COD10KDataset(Dataset):
                 print(f"  ✓ Cached {len(self.image_cache)} images in RAM (~{mem_mb:.0f}MB)")
 
         if self.augment:
-            # FIX: Updated augmentations to avoid warnings and errors
+            # Enhanced augmentations for cross-dataset generalization
             self.transform = A.Compose([
-                # Geometric - Stronger for COD
+                # ========================================
+                # DOMAIN RANDOMIZATION (NEW)
+                # Helps generalize to different cameras/environments
+                # ========================================
+                A.OneOf([
+                    A.RandomToneCurve(scale=0.2, p=1.0),
+                    A.ChannelShuffle(p=1.0),
+                    A.RGBShift(r_shift_limit=30, g_shift_limit=30, b_shift_limit=30, p=1.0),
+                ], p=0.3),
+                A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=0.2),
+                
+                # ========================================
+                # GEOMETRIC TRANSFORMS
+                # ========================================
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.3),
                 A.RandomRotate90(p=0.5),
                 
-                # FIX 1: Replace ShiftScaleRotate with Affine
                 A.Affine(
                     scale=(0.75, 1.25),
                     translate_percent=(0.0, 0.15),
@@ -172,21 +184,43 @@ class COD10KDataset(Dataset):
                     p=0.6,
                     mode=cv2.BORDER_CONSTANT
                 ),
-
-                # Noise/Blur
+                
+                # ========================================
+                # STRONGER GEOMETRIC (NEW)
+                # Non-linear deformations for robustness
+                # ========================================
+                A.OneOf([
+                    A.ElasticTransform(alpha=120, sigma=6, p=1.0),
+                    A.GridDistortion(num_steps=5, distort_limit=0.3, p=1.0),
+                    A.OpticalDistortion(distort_limit=0.5, shift_limit=0.5, p=1.0),
+                ], p=0.3),
+                A.Perspective(scale=(0.05, 0.15), p=0.3),
+                
+                # ========================================
+                # ENVIRONMENTAL EFFECTS (NEW)
+                # Simulate outdoor conditions
+                # ========================================
+                A.RandomShadow(shadow_roi=(0, 0, 1, 1), p=0.2),
+                A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3, alpha_coef=0.1, p=0.1),
+                
+                # ========================================
+                # NOISE/BLUR
+                # ========================================
                 A.OneOf([
                     A.GaussNoise(var_limit=(10.0, 50.0), p=1.0),
                     A.GaussianBlur(blur_limit=(3, 7), p=1.0),
                     A.MotionBlur(blur_limit=7, p=1.0),
                 ], p=0.4),
 
-                # Color - Stronger
+                # ========================================
+                # COLOR AUGMENTATION
+                # ========================================
                 A.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1, p=0.6),
                 A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.5),
 
-                # FIX 2: Correct CoarseDropout arguments
-                # 'max_holes', 'max_height', etc. are deprecated or invalid in newer versions
-                # Use 'num_holes_range', 'hole_height_range', 'hole_width_range'
+                # ========================================
+                # CUTOUT/DROPOUT
+                # ========================================
                 A.CoarseDropout(
                     num_holes_range=(2, 8),
                     hole_height_range=(16, 32),
@@ -194,6 +228,9 @@ class COD10KDataset(Dataset):
                     p=0.3
                 ),
 
+                # ========================================
+                # NORMALIZE & CONVERT
+                # ========================================
                 A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                 ToTensorV2()
             ])
