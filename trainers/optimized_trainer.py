@@ -966,17 +966,22 @@ class OptimizedTrainer:
         Args:
             val_loader: DataLoader for validation data
             metrics_fn: Optional function to compute additional metrics
+                        NOTE: metrics_fn should accept (pred, target) tensors for a SINGLE BATCH
+                        and return a dict of metric values
 
         Returns:
-            metrics: Dictionary of validation metrics
+            metrics: Dictionary of validation metrics (synchronized across DDP ranks)
         """
+        import torch.distributed as dist
+        
         self.model.eval()
 
         val_loss = 0.0
         num_batches = 0
+        num_samples = 0
 
-        all_predictions = []
-        all_targets = []
+        # Accumulate metrics incrementally (not predictions)
+        running_metrics = {}
 
         # Wrap validation loader with tqdm if available
         if TQDM_AVAILABLE:
@@ -988,6 +993,7 @@ class OptimizedTrainer:
             for images, masks in val_iter:
                 images = images.to(self.device)
                 masks = masks.to(self.device)
+                batch_size = images.size(0)
 
                 # Forward pass
                 with autocast('cuda', enabled=self.use_amp):
@@ -1003,25 +1009,72 @@ class OptimizedTrainer:
 
                     loss = self.criterion(predictions, masks, input_image=images)
 
-                val_loss += loss.item()
+                val_loss += loss.item() * batch_size
                 num_batches += 1
+                num_samples += batch_size
 
-                # Collect for metrics
+                # Compute metrics for this batch incrementally (memory-efficient)
                 if metrics_fn is not None:
-                    all_predictions.append(predictions.cpu())
-                    all_targets.append(masks.cpu())
+                    batch_metrics = metrics_fn(predictions, masks)
+                    
+                    # Accumulate weighted by batch size
+                    for key, value in batch_metrics.items():
+                        if key not in running_metrics:
+                            running_metrics[key] = 0.0
+                        running_metrics[key] += value * batch_size
 
-        avg_loss = val_loss / num_batches
-
+        # Compute local averages
+        avg_loss = val_loss / max(num_samples, 1)
         metrics = {'val_loss': avg_loss}
 
-        # Compute additional metrics
-        if metrics_fn is not None and len(all_predictions) > 0:
-            all_predictions = torch.cat(all_predictions, dim=0)
-            all_targets = torch.cat(all_targets, dim=0)
+        # Average the accumulated metrics
+        for key, value in running_metrics.items():
+            metrics[key] = value / max(num_samples, 1)
 
-            additional_metrics = metrics_fn(all_predictions, all_targets)
-            metrics.update(additional_metrics)
+        # Synchronize metrics across DDP ranks
+        if dist.is_initialized():
+            world_size = dist.get_world_size()
+            
+            # Create tensor for all metrics + num_samples for proper weighted average
+            metric_keys = sorted(metrics.keys())
+            local_values = torch.tensor(
+                [metrics[k] for k in metric_keys] + [float(num_samples)],
+                device=self.device
+            )
+            
+            # All-reduce: sum across all ranks
+            dist.all_reduce(local_values, op=dist.ReduceOp.SUM)
+            
+            # Compute global averages (weighted by samples per rank)
+            total_samples = local_values[-1].item()
+            
+            # For proper weighted average: each rank contributed (metric * num_samples)
+            # We need to recompute: sum all (metric*samples) / total_samples
+            # But we already divided by num_samples locally, so we have: metric_avg_per_rank
+            # After sum: sum_of_averages, which is wrong for weighted average
+            
+            # Actually, we need to reconstruct: we have local avg * local_samples summed
+            # Let's fix this properly: accumulate (metric_sum, sample_count) then divide
+            
+            # Re-accumulate properly
+            local_sums = torch.tensor(
+                [running_metrics.get(k, 0.0) for k in metric_keys if k in running_metrics] 
+                + [val_loss]  # val_loss is already a sum
+                + [float(num_samples)],
+                device=self.device
+            )
+            
+            dist.all_reduce(local_sums, op=dist.ReduceOp.SUM)
+            
+            metric_keys_for_sync = [k for k in metric_keys if k in running_metrics]
+            total_samples = local_sums[-1].item()
+            
+            metrics = {}
+            for i, key in enumerate(metric_keys_for_sync):
+                metrics[key] = local_sums[i].item() / max(total_samples, 1)
+            
+            # val_loss is at index -2
+            metrics['val_loss'] = local_sums[-2].item() / max(total_samples, 1)
 
         return metrics
 
