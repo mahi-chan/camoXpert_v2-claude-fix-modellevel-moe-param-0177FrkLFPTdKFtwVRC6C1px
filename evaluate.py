@@ -141,9 +141,8 @@ class EvalDataset(Dataset):
         return {
             'image': torch.from_numpy(image).float(),
             'gt': torch.from_numpy(gt_resized).unsqueeze(0).float(),
-            'gt_original': torch.from_numpy((gt > 128).astype(np.float32)).unsqueeze(0).float(),
             'name': base_name,
-            'original_size': original_size
+            'original_size': original_size  # (W, H) tuple for resizing predictions back
         }
 
 
