@@ -1031,49 +1031,31 @@ class OptimizedTrainer:
         for key, value in running_metrics.items():
             metrics[key] = value / max(num_samples, 1)
 
-        # Synchronize metrics across DDP ranks
+        # Synchronize metrics across DDP ranks (SIMPLIFIED to avoid deadlock)
         if dist.is_initialized():
-            world_size = dist.get_world_size()
+            # Collect all metric sums (not averages) + val_loss sum + sample count
+            metric_keys_for_sync = sorted([k for k in running_metrics.keys()])
             
-            # Create tensor for all metrics + num_samples for proper weighted average
-            metric_keys = sorted(metrics.keys())
-            local_values = torch.tensor(
-                [metrics[k] for k in metric_keys] + [float(num_samples)],
-                device=self.device
-            )
+            # Build tensor: [metric_sum_1, metric_sum_2, ..., val_loss_sum, num_samples]
+            sync_values = []
+            for k in metric_keys_for_sync:
+                sync_values.append(running_metrics.get(k, 0.0))
+            sync_values.append(val_loss)  # Already a sum
+            sync_values.append(float(num_samples))
             
-            # All-reduce: sum across all ranks
-            dist.all_reduce(local_values, op=dist.ReduceOp.SUM)
+            local_sums = torch.tensor(sync_values, device=self.device, dtype=torch.float32)
             
-            # Compute global averages (weighted by samples per rank)
-            total_samples = local_values[-1].item()
-            
-            # For proper weighted average: each rank contributed (metric * num_samples)
-            # We need to recompute: sum all (metric*samples) / total_samples
-            # But we already divided by num_samples locally, so we have: metric_avg_per_rank
-            # After sum: sum_of_averages, which is wrong for weighted average
-            
-            # Actually, we need to reconstruct: we have local avg * local_samples summed
-            # Let's fix this properly: accumulate (metric_sum, sample_count) then divide
-            
-            # Re-accumulate properly
-            local_sums = torch.tensor(
-                [running_metrics.get(k, 0.0) for k in metric_keys if k in running_metrics] 
-                + [val_loss]  # val_loss is already a sum
-                + [float(num_samples)],
-                device=self.device
-            )
-            
+            # Single all_reduce call (prevents deadlock)
             dist.all_reduce(local_sums, op=dist.ReduceOp.SUM)
             
-            metric_keys_for_sync = [k for k in metric_keys if k in running_metrics]
+            # Extract synchronized values
             total_samples = local_sums[-1].item()
             
+            # Rebuild metrics dict with global averages
             metrics = {}
             for i, key in enumerate(metric_keys_for_sync):
                 metrics[key] = local_sums[i].item() / max(total_samples, 1)
             
-            # val_loss is at index -2
             metrics['val_loss'] = local_sums[-2].item() / max(total_samples, 1)
 
         return metrics

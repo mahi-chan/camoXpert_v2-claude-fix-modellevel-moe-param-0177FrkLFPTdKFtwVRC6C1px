@@ -181,8 +181,7 @@ class COD10KDataset(Dataset):
                     translate_percent=(0.0, 0.15),
                     rotate=(-20, 20),
                     shear=(-10, 10),
-                    p=0.6,
-                    mode=cv2.BORDER_CONSTANT
+                    p=0.6
                 ),
                 
                 # ========================================
@@ -192,7 +191,7 @@ class COD10KDataset(Dataset):
                 A.OneOf([
                     A.ElasticTransform(alpha=120, sigma=6, p=1.0),
                     A.GridDistortion(num_steps=5, distort_limit=0.3, p=1.0),
-                    A.OpticalDistortion(distort_limit=0.5, shift_limit=0.5, p=1.0),
+                    A.OpticalDistortion(distort_limit=0.5, p=1.0),
                 ], p=0.3),
                 A.Perspective(scale=(0.05, 0.15), p=0.3),
                 
@@ -201,13 +200,13 @@ class COD10KDataset(Dataset):
                 # Simulate outdoor conditions
                 # ========================================
                 A.RandomShadow(shadow_roi=(0, 0, 1, 1), p=0.2),
-                A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3, alpha_coef=0.1, p=0.1),
+                A.RandomFog(fog_coef_range=(0.1, 0.3), alpha_coef=0.1, p=0.1),
                 
                 # ========================================
                 # NOISE/BLUR
                 # ========================================
                 A.OneOf([
-                    A.GaussNoise(var_limit=(10.0, 50.0), p=1.0),
+                    A.GaussNoise(std_range=(0.03, 0.1), p=1.0),
                     A.GaussianBlur(blur_limit=(3, 7), p=1.0),
                     A.MotionBlur(blur_limit=7, p=1.0),
                 ], p=0.4),
