@@ -22,7 +22,7 @@ class SOTALoss(nn.Module):
     SOTA-aligned loss for Camouflaged Object Detection.
     
     Combines three complementary losses:
-    1. BCE with pos_weight: Handles class imbalance
+    1. Edge-weighted BCE: 5x weight on boundary regions (PraNet-style)
     2. Soft IoU: Directly optimizes IoU/F-measure
     3. Structure Loss: Optimizes S-measure (structural similarity)
     
@@ -30,7 +30,7 @@ class SOTALoss(nn.Module):
         bce_weight: Weight for BCE loss (default: 1.0)
         iou_weight: Weight for IoU loss (default: 1.0)
         structure_weight: Weight for structure loss (default: 0.5)
-        pos_weight: Class balance weight for foreground (default: 2.0)
+        pos_weight: Unused (kept for interface compatibility)
         aux_weight: Weight for MoE auxiliary loss (default: 0.1)
         deep_weight: Weight for deep supervision (default: 0.4)
     """
@@ -61,9 +61,9 @@ class SOTALoss(nn.Module):
         self.pool_padding = self.pool_size // 2
         
         print("\n" + "="*60)
-        print("SOTA LOSS - Optimized for Generalization")
+        print("SOTA LOSS - Optimized for Generalization + Edge Precision")
         print("="*60)
-        print(f"  BCE weight:       {bce_weight:.1f} (pos_weight={pos_weight:.1f})")
+        print(f"  BCE weight:       {bce_weight:.1f} (edge-weighted, 5x on boundaries)")
         print(f"  IoU weight:       {iou_weight:.1f}")
         print(f"  Structure weight: {structure_weight:.1f}")
         print(f"  Aux weight:       {aux_weight:.1f}")
@@ -76,15 +76,21 @@ class SOTALoss(nn.Module):
     
     def bce_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
-        BCE with logits and class balancing.
+        Edge-weighted BCE loss (PraNet-style).
+        Gives 5x weight to boundary regions for better edge precision.
         Safe with AMP (autocast).
         """
-        # Move pos_weight to correct device
-        pos_weight = self.pos_weight_tensor.to(logits.device)
-        
-        return F.binary_cross_entropy_with_logits(
-            logits, targets, pos_weight=pos_weight
+        # Compute edge weight map: 1 + 5 * |local_avg - mask|
+        # Boundary pixels have high difference from local average
+        weit = 1 + 5 * torch.abs(
+            F.avg_pool2d(targets, kernel_size=31, stride=1, padding=15) - targets
         )
+        
+        # Weighted BCE
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+        weighted_bce = (weit * bce).sum(dim=(2, 3)) / weit.sum(dim=(2, 3))
+        
+        return weighted_bce.mean()
     
     def iou_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
