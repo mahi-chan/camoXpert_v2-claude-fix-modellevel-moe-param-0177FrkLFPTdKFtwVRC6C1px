@@ -81,9 +81,9 @@ class SOTALoss(nn.Module):
         Safe with AMP (autocast).
         """
         # Compute edge weight map: 1 + 5 * |local_avg - mask|
-        # Boundary pixels have high difference from local average
+        # Using 15x15 kernel (faster than 31x31, still effective)
         weit = 1 + 5 * torch.abs(
-            F.avg_pool2d(targets, kernel_size=31, stride=1, padding=15) - targets
+            F.avg_pool2d(targets, kernel_size=15, stride=1, padding=7) - targets
         )
         
         # Weighted BCE
