@@ -399,7 +399,7 @@ def create_model(args, device, is_main_process):
             model,
             device_ids=[args.local_rank],
             output_device=args.local_rank,
-            find_unused_parameters=False  # All experts run every forward, no unused params
+            find_unused_parameters=True  # Required: router frozen during warmup
         )
 
         if boundary_refinement is not None:
