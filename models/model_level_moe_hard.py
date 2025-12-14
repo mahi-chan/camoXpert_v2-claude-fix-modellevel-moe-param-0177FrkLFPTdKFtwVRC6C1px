@@ -334,34 +334,7 @@ class ModelLevelMoEHard(nn.Module):
                     if aux:
                         expert_aux_outputs.extend(aux[:2])
 
-        # ============================================================
-        # Step 5: Auxiliary loss for unselected experts (training only)
-        # ============================================================
-        auxiliary_expert_loss = None
-        if self.training:
-            # Small loss term to keep unselected experts engaged
-            # This prevents them from drifting too far
-            unselected_mask = 1 - selected_mask
-            if unselected_mask.sum() > 0:
-                # Compute soft prediction for gradient signal
-                with torch.no_grad():
-                    target_pred = final_prediction.detach()
-                
-                # Very small weight auxiliary loss
-                auxiliary_expert_loss = torch.tensor(0.0, device=device)
-                for expert_idx in range(self.num_experts):
-                    expert_unselected = unselected_mask[:, expert_idx]
-                    if expert_unselected.sum() > 0:
-                        sample_indices = torch.where(expert_unselected > 0)[0]
-                        if len(sample_indices) > 0:
-                            selected_features = [f[sample_indices] for f in features]
-                            with torch.enable_grad():
-                                expert_pred, _ = self.expert_models[expert_idx](selected_features, return_aux=False)
-                                # Small MSE loss to keep expert aligned
-                                auxiliary_expert_loss += 0.01 * F.mse_loss(
-                                    torch.sigmoid(expert_pred),
-                                    torch.sigmoid(target_pred[sample_indices])
-                                )
+        # ============================================================\n        # Step 5: Auxiliary loss DISABLED for memory efficiency\n        # ============================================================\n        # NOTE: Auxiliary loss was removed because it runs unselected experts,\n        # which defeats the purpose of sparse routing and causes OOM.\n        # The load balancing loss from the router is sufficient for expert diversity.\n        auxiliary_expert_loss = None
 
         # ============================================================
         # Return prediction with routing info
