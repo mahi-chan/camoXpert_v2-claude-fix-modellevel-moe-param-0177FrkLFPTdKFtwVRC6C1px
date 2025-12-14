@@ -80,18 +80,20 @@ class SOTALoss(nn.Module):
     def bce_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Edge-weighted BCE loss with label smoothing for better generalization.
+        Edge weights use ORIGINAL targets, label smoothing only for BCE.
         """
-        # Apply label smoothing: smooth 0 -> eps, 1 -> 1-eps
-        if self.label_smoothing > 0:
-            targets = targets * (1 - self.label_smoothing) + 0.5 * self.label_smoothing
-        
-        # Compute edge weight map: 1 + 2 * |local_avg - mask|
+        # Compute edge weight map using ORIGINAL targets (not smoothed)
         weit = 1 + 2 * torch.abs(
             F.avg_pool2d(targets, kernel_size=15, stride=1, padding=7) - targets
         )
         
-        # Weighted BCE
-        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+        # Apply label smoothing ONLY to BCE targets
+        bce_targets = targets
+        if self.label_smoothing > 0:
+            bce_targets = targets * (1 - self.label_smoothing) + 0.5 * self.label_smoothing
+        
+        # Weighted BCE with smoothed targets
+        bce = F.binary_cross_entropy_with_logits(logits, bce_targets, reduction='none')
         weighted_bce = (weit * bce).sum(dim=(2, 3)) / weit.sum(dim=(2, 3))
         
         return weighted_bce.mean()
