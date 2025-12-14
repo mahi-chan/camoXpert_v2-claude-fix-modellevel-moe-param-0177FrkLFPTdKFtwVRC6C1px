@@ -61,6 +61,7 @@ except ImportError:
         print("WARNING: Using original dataset.py (dataset_updated not found)")
 from metrics.cod_metrics import CODMetrics
 from models.model_level_moe import ModelLevelMoE
+from models.model_level_moe_hard import ModelLevelMoEHard  # Hard sparse MoE with Gumbel-Softmax
 from models.utils import set_seed
 from models.multi_scale_processor import MultiScaleInputProcessor
 from models.boundary_refinement import BoundaryRefinementModule
@@ -95,6 +96,15 @@ def parse_args():
                         help='Enable deep supervision in model')
     parser.add_argument('--no-deep-supervision', action='store_false', dest='deep_supervision',
                         help='Disable deep supervision')
+    
+    # Hard MoE (Sparse Routing with Gumbel-Softmax)
+    parser.add_argument('--hard-routing', action='store_true', default=False,
+                        help='Use hard sparse MoE routing (Gumbel-Softmax). '
+                             'Enables FEDER+PraNet+ZoomNet experts with compute savings.')
+    parser.add_argument('--gumbel-temperature', type=float, default=1.0,
+                        help='Gumbel-Softmax temperature (lower = harder selection, default: 1.0)')
+    parser.add_argument('--expert-dropout', type=float, default=0.1,
+                        help='Expert dropout rate during training (default: 0.1)')
 
     # Training
     parser.add_argument('--epochs', type=int, default=100,
@@ -131,8 +141,8 @@ def parse_args():
     # Router warmup (for MoE models)
     parser.add_argument('--enable-router-warmup', action='store_true', default=True,
                         help='Enable router warmup (freeze router for initial epochs)')
-    parser.add_argument('--router-warmup-epochs', type=int, default=5,
-                        help='Number of epochs to keep router frozen (default: 5)')
+    parser.add_argument('--router-warmup-epochs', type=int, default=20,
+                        help='Number of epochs to keep router frozen (default: 20, increased for better specialization)')
 
     # Loss Function Selection
     parser.add_argument('--loss-type', type=str, default='sota',
@@ -330,14 +340,28 @@ def create_dataloaders(args, is_main_process):
 def create_model(args, device, is_main_process):
     """Create model with all enhancements."""
 
-    # Base model (ModelLevelMoE)
-    model = ModelLevelMoE(
-        backbone_name=args.backbone,
-        num_experts=args.num_experts,
-        top_k=args.top_k,
-        pretrained=args.pretrained,
-        use_deep_supervision=args.deep_supervision
-    )
+    # Choose MoE variant: Soft (default) or Hard (sparse with Gumbel-Softmax)
+    if args.hard_routing:
+        if is_main_process:
+            print("\n🔥 Using HARD SPARSE MoE (Gumbel-Softmax + FEDER Expert)")
+        model = ModelLevelMoEHard(
+            backbone_name=args.backbone,
+            num_experts=args.num_experts,
+            top_k=args.top_k,
+            pretrained=args.pretrained,
+            use_deep_supervision=args.deep_supervision,
+            temperature=args.gumbel_temperature,
+            expert_dropout=args.expert_dropout
+        )
+    else:
+        # Default: Soft MoE (all experts contribute)
+        model = ModelLevelMoE(
+            backbone_name=args.backbone,
+            num_experts=args.num_experts,
+            top_k=args.top_k,
+            pretrained=args.pretrained,
+            use_deep_supervision=args.deep_supervision
+        )
 
     # Store original backbone for multi-scale wrapping
     original_backbone = model.backbone
