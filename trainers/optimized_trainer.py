@@ -693,7 +693,8 @@ class OptimizedTrainer:
         enable_progressive_aug: bool = True,
         aug_transition_epoch: int = 50,
         aug_max_strength: float = 0.5,
-        aug_transition_duration: int = 50
+        aug_transition_duration: int = 50,
+        ema = None  # EMA instance for per-step updates
     ):
         self.model = model
         self.optimizer = optimizer
@@ -701,6 +702,7 @@ class OptimizedTrainer:
         self.device = device
         self.accumulation_steps = accumulation_steps
         self.use_amp = use_amp
+        self.ema = ema  # Store EMA for per-step updates
 
         # Learning rate scheduler
         self.scheduler = CosineAnnealingWithWarmup(
@@ -876,6 +878,10 @@ class OptimizedTrainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
                 self.optimizer.zero_grad()
+
+                # Update EMA after each optimizer step (per-step update)
+                if self.ema is not None:
+                    self.ema.update()
 
                 self.global_step += 1
 

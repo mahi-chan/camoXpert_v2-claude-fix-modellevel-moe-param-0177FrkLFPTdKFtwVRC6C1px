@@ -594,6 +594,15 @@ def main():
         'args': args
     }
 
+    # Initialize EMA if enabled (BEFORE trainer so it can be passed)
+    ema_model = None
+    if args.use_ema:
+        # Get base model (unwrap DDP if needed)
+        base_model = model.module if hasattr(model, 'module') else model
+        ema_model = EMA(base_model, decay=args.ema_decay)
+        if is_main_process:
+            print(f"✓ EMA enabled (decay={args.ema_decay})")
+
     # OptimizedTrainer with all features
     trainer = OptimizedTrainer(
         model=model,
@@ -612,22 +621,14 @@ def main():
         enable_progressive_aug=args.enable_progressive_aug,
         aug_transition_epoch=args.aug_transition_epoch,
         aug_max_strength=args.aug_max_strength,
-        aug_transition_duration=args.aug_transition_duration
+        aug_transition_duration=args.aug_transition_duration,
+        ema=ema_model  # Pass EMA for per-step updates
     )
 
     # Store additional modules in trainer for access during training
     trainer.multi_scale_processor = multi_scale_processor
     trainer.boundary_refinement = boundary_refinement
     trainer.training_args = args
-
-    # Initialize EMA if enabled
-    ema_model = None
-    if args.use_ema:
-        # Get base model (unwrap DDP if needed)
-        base_model = model.module if hasattr(model, 'module') else model
-        ema_model = EMA(base_model, decay=args.ema_decay)
-        if is_main_process:
-            print(f"✓ EMA enabled (decay={args.ema_decay})")
 
     if is_main_process:
         print("✓ OptimizedTrainer initialized with:")
@@ -695,18 +696,14 @@ def main():
             boundary_module = boundary_refinement.module if hasattr(boundary_refinement, 'module') else boundary_refinement
             boundary_module.set_epoch(epoch)
 
-        # Train one epoch with simple structure loss
+        # Train one epoch (EMA is updated per-step inside trainer)
         train_metrics = trainer.train_epoch(train_loader, epoch=epoch, log_interval=20)
-
-        # Update EMA after each epoch (if enabled)
-        if ema_model is not None:
-            ema_model.update()
 
         # Validate (run every val_freq epochs, or on last epoch, or on first epoch)
         should_validate = ((epoch + 1) % args.val_freq == 0) or (epoch == 0) or (epoch == args.epochs - 1)
 
         if should_validate:
-            # Use EMA weights for validation (more stable)
+            # Use EMA weights for validation (more stable, per-step updated)
             if ema_model is not None:
                 ema_model.apply_shadow()
             
