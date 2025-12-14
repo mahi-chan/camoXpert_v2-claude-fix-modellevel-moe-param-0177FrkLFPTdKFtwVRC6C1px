@@ -306,7 +306,6 @@ class ModelLevelMoEHard(nn.Module):
         out_w = features[0].shape[3] * 4
         
         final_prediction = torch.zeros(B, 1, out_h, out_w, device=device)
-        expert_aux_outputs = []
         
         # Run only selected experts
         for expert_idx in range(self.num_experts):
@@ -322,15 +321,13 @@ class ModelLevelMoEHard(nn.Module):
                     selected_features = [f[sample_indices] for f in features]
                     
                     # Run expert only on selected samples
-                    expert_pred, aux = self.expert_models[expert_idx](selected_features, return_aux=True)
+                    # NOTE: Don't collect aux outputs - sparse routing causes batch size mismatch
+                    expert_pred, _ = self.expert_models[expert_idx](selected_features, return_aux=False)
                     
                     # Add weighted prediction for each selected sample
                     for i, b in enumerate(sample_indices):
                         weight = selected_weights[b, expert_idx]
                         final_prediction[b:b+1] += weight * expert_pred[i:i+1]
-                    
-                    if aux:
-                        expert_aux_outputs.extend(aux[:2])
 
         # ============================================================
         # Step 5: Auxiliary loss DISABLED for memory efficiency
@@ -355,7 +352,7 @@ class ModelLevelMoEHard(nn.Module):
                 'routing_stats': self.router.get_expert_usage_stats(expert_probs),
                 'load_balance_loss': router_aux.get('load_balance_loss', None),
                 'confidence': router_aux.get('confidence', None),
-                'aux_outputs': expert_aux_outputs[:4] if expert_aux_outputs else None,
+                'aux_outputs': None,  # Disabled for hard MoE (batch mismatch)
                 'auxiliary_expert_loss': auxiliary_expert_loss,
                 'temperature': self.temperature,
             }
