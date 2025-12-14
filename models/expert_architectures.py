@@ -1627,30 +1627,38 @@ class FEDERLightExpert(nn.Module):
             ) for dim in feature_dims
         ])
         
-        # Low-frequency processing (just instance norm + 1x1 conv)
+        # Low-frequency processing: instance norm + double conv (heavier)
         self.low_process = nn.ModuleList([
             nn.Sequential(
                 nn.InstanceNorm2d(dim, affine=True),
-                nn.Conv2d(dim, dim, 1, bias=False),
+                nn.Conv2d(dim, dim, 3, padding=1, bias=False),  # 3x3 instead of 1x1
+                nn.BatchNorm2d(dim),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(dim, dim, 3, padding=1, bias=False),  # Added second conv
                 nn.BatchNorm2d(dim),
                 nn.ReLU(inplace=True)
             ) for dim in feature_dims
         ])
         
-        # Edge refinement only for top 2 scales (320, 512) - saves ~10M params
+        # Edge refinement at ALL scales (not just top 2) - adds more params
         self.edge_refine = nn.ModuleList([
             nn.Sequential(
                 nn.Conv2d(dim, dim, 3, padding=1, bias=False),
                 nn.BatchNorm2d(dim),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(dim, dim, 3, padding=1, bias=False),  # Double conv
+                nn.BatchNorm2d(dim),
                 nn.ReLU(inplace=True)
-            ) if i >= 2 else nn.Identity()  # Only for scale 2 and 3
-            for i, dim in enumerate(feature_dims)
+            ) for dim in feature_dims  # All scales now
         ])
         
-        # Fusion: simple 1x1 conv (low + high → unified)
+        # Fusion: 3x3 conv (heavier than 1x1)
         self.fusion = nn.ModuleList([
             nn.Sequential(
-                nn.Conv2d(dim * 2, dim, 1, bias=False),
+                nn.Conv2d(dim * 2, dim, 3, padding=1, bias=False),  # 3x3 instead of 1x1
+                nn.BatchNorm2d(dim),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(dim, dim, 3, padding=1, bias=False),  # Added second conv
                 nn.BatchNorm2d(dim),
                 nn.ReLU(inplace=True)
             ) for dim in feature_dims
