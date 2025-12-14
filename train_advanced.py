@@ -399,7 +399,7 @@ def create_model(args, device, is_main_process):
             model,
             device_ids=[args.local_rank],
             output_device=args.local_rank,
-            find_unused_parameters=True  # For MoE models
+            find_unused_parameters=False  # All experts run every forward, no unused params
         )
 
         if boundary_refinement is not None:

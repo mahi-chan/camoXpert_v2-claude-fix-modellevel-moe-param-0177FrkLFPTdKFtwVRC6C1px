@@ -974,10 +974,6 @@ class OptimizedTrainer:
         """
         import torch.distributed as dist
         
-        # DDP barrier: ensure all processes are in sync before validation
-        if dist.is_initialized():
-            dist.barrier()
-        
         self.model.eval()
 
         val_loss = 0.0
@@ -1035,32 +1031,27 @@ class OptimizedTrainer:
         for key, value in running_metrics.items():
             metrics[key] = value / max(num_samples, 1)
 
-        # Synchronize metrics across DDP ranks (SIMPLIFIED to avoid deadlock)
+        # Synchronize metrics across DDP ranks for full validation
         if dist.is_initialized():
-            # Collect all metric sums (not averages) + val_loss sum + sample count
-            metric_keys_for_sync = sorted([k for k in running_metrics.keys()])
+            # Collect metric sums + val_loss sum + sample count
+            metric_keys = sorted([k for k in running_metrics.keys()])
             
-            # Build tensor: [metric_sum_1, metric_sum_2, ..., val_loss_sum, num_samples]
-            sync_values = []
-            for k in metric_keys_for_sync:
-                sync_values.append(running_metrics.get(k, 0.0))
-            sync_values.append(val_loss)  # Already a sum
-            sync_values.append(float(num_samples))
+            # Build sync tensor: [metric_sum_1, ..., val_loss_sum, num_samples]
+            sync_data = [running_metrics.get(k, 0.0) for k in metric_keys]
+            sync_data.append(val_loss)
+            sync_data.append(float(num_samples))
             
-            local_sums = torch.tensor(sync_values, device=self.device, dtype=torch.float32)
+            sync_tensor = torch.tensor(sync_data, device=self.device, dtype=torch.float32)
             
-            # Single all_reduce call (prevents deadlock)
-            dist.all_reduce(local_sums, op=dist.ReduceOp.SUM)
+            # All-reduce to sum across ranks
+            dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
             
-            # Extract synchronized values
-            total_samples = local_sums[-1].item()
-            
-            # Rebuild metrics dict with global averages
+            # Compute global averages
+            total_samples = sync_tensor[-1].item()
             metrics = {}
-            for i, key in enumerate(metric_keys_for_sync):
-                metrics[key] = local_sums[i].item() / max(total_samples, 1)
-            
-            metrics['val_loss'] = local_sums[-2].item() / max(total_samples, 1)
+            for i, key in enumerate(metric_keys):
+                metrics[key] = sync_tensor[i].item() / max(total_samples, 1)
+            metrics['val_loss'] = sync_tensor[-2].item() / max(total_samples, 1)
 
         return metrics
 
