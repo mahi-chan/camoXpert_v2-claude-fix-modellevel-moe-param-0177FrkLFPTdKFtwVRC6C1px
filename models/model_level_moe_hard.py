@@ -1,22 +1,20 @@
 """
 Model-Level Mixture-of-Experts (MoE) with HARD SPARSE ROUTING
 
-IMPROVEMENTS OVER SOFT MoE:
+Key difference from Soft MoE:
+- Soft MoE: Runs ALL experts, combines with soft weights
+- Hard MoE: Runs ONLY top-k experts per sample (sparse, efficient)
+
+IMPROVEMENTS:
 1. Gumbel-Softmax: Differentiable hard selection (training stability)
-2. FEDER Expert: Replaces SINet for architectural diversity
-3. Auxiliary loss: Gradients flow to unselected experts via soft targets
-4. Straight-Through Estimator: Hard forward, soft backward
+2. Straight-Through Estimator: Hard forward, soft backward
+3. Expert dropout: Prevents weight imbalance
+4. 33% compute savings (only 2/3 experts run per sample)
 
-Expert Lineup (More Diverse):
-- Expert 0: FEDER (Frequency Decomposition + Edge Reconstruction) 
-- Expert 1: PraNet (Reverse Attention)
+Expert Lineup (same as Soft MoE for fair comparison):
+- Expert 0: SINet (Search & Identify)
+- Expert 1: PraNet (Reverse Attention)  
 - Expert 2: ZoomNet (Multi-Scale Zoom)
-
-Paper-Worthy Claims:
-1. Compute Efficiency: Only k/n experts run per sample (~33% savings with top-2/3)
-2. Differentiable Routing: Gumbel-Softmax enables end-to-end training
-3. Architectural Diversity: FEDER, PraNet, ZoomNet cover different strategies
-4. Specialization: Forces experts to specialize on different image types
 """
 
 import torch
@@ -25,7 +23,7 @@ import torch.nn.functional as F
 
 from models.sophisticated_router import SophisticatedRouter
 from models.expert_architectures import (
-    FEDERFrequencyExpert,  # NEW: Frequency expert replaces SINet
+    FEDERLightExpert,  # Lightweight frequency expert (~15M, same as SINet)
     PraNetExpert,
     ZoomNetExpert,
 )
@@ -134,21 +132,21 @@ class ModelLevelMoEHard(nn.Module):
         print(f"✓ Router created: {router_params/1e6:.1f}M parameters")
 
         # ============================================================
-        # EXPERT MODELS - More Diverse!
+        # EXPERT MODELS - Diverse Architectures
         # ============================================================
         print("\n[3/3] Creating DIVERSE expert models...")
 
-        # FEDER replaces SINet for more diversity
-        # FEDER: Frequency decomposition (different approach from spatial methods)
+        # Hard MoE uses FEDER-Light for architectural diversity
+        # FEDER-Light: Frequency decomposition (different from spatial methods!)
         # PraNet: Reverse attention (boundary-focused)
         # ZoomNet: Multi-scale zoom (scale-focused)
         self.expert_models = nn.ModuleList([
-            FEDERFrequencyExpert(self.feature_dims),  # Expert 0: Frequency + Edge
-            PraNetExpert(self.feature_dims),          # Expert 1: Reverse Attention
-            ZoomNetExpert(self.feature_dims),         # Expert 2: Multi-Scale Zoom
+            FEDERLightExpert(self.feature_dims),  # Expert 0: Frequency (~15M)
+            PraNetExpert(self.feature_dims),      # Expert 1: Reverse Attention
+            ZoomNetExpert(self.feature_dims),     # Expert 2: Multi-Scale Zoom
         ])
 
-        expert_names = ["FEDER (Frequency)", "PraNet (Attention)", "ZoomNet (Scale)"]
+        expert_names = ["FEDER-Light (Frequency)", "PraNet (Boundary)", "ZoomNet (Scale)"]
         for i, (name, expert) in enumerate(zip(expert_names, self.expert_models)):
             params = sum(p.numel() for p in expert.parameters())
             print(f"✓ Expert {i} ({name}): {params/1e6:.1f}M parameters")
@@ -334,7 +332,13 @@ class ModelLevelMoEHard(nn.Module):
                     if aux:
                         expert_aux_outputs.extend(aux[:2])
 
-        # ============================================================\n        # Step 5: Auxiliary loss DISABLED for memory efficiency\n        # ============================================================\n        # NOTE: Auxiliary loss was removed because it runs unselected experts,\n        # which defeats the purpose of sparse routing and causes OOM.\n        # The load balancing loss from the router is sufficient for expert diversity.\n        auxiliary_expert_loss = None
+        # ============================================================
+        # Step 5: Auxiliary loss DISABLED for memory efficiency
+        # ============================================================
+        # NOTE: Auxiliary loss was removed because it runs unselected experts,
+        # which defeats the purpose of sparse routing and causes OOM.
+        # The load balancing loss from the router is sufficient for expert diversity.
+        auxiliary_expert_loss = None
 
         # ============================================================
         # Return prediction with routing info

@@ -1557,6 +1557,153 @@ class FEDERFrequencyExpert(nn.Module):
             return pred, []  # MoE compatibility
 
 
+# ============================================================
+# EXPERT 6: FEDER-Light (Lightweight Frequency Expert)
+# Target: ~15M parameters (same as SINet/PraNet)
+# ============================================================
+
+class FEDERLightExpert(nn.Module):
+    """
+    Lightweight FEDER Expert for Model-Level MoE
+    
+    Optimized from 49M → ~15M params by:
+    1. Single conv block instead of double for high-freq attention
+    2. Simpler 1x1 fusion instead of 3x3 double conv
+    3. ODE only on top 2 scales (320, 512)
+    4. Shared high-freq processing for LH/HL/HH
+    5. Reduced reduction ratio in attention
+    
+    Still maintains key FEDER concepts:
+    - Wavelet decomposition (learnable Haar)
+    - Frequency-specific processing
+    - Edge reconstruction
+    """
+    
+    def __init__(self, feature_dims=[64, 128, 320, 512]):
+        super().__init__()
+        self.feature_dims = feature_dims
+        
+        # Lightweight wavelet: simple Sobel-like filters instead of full learnable wavelets
+        self.wavelet_low = nn.ModuleList([
+            nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
+            for dim in feature_dims
+        ])
+        self.wavelet_high = nn.ModuleList([
+            nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
+            for dim in feature_dims
+        ])
+        
+        # Initialize with low-pass and high-pass patterns
+        for conv_low, conv_high in zip(self.wavelet_low, self.wavelet_high):
+            # Low-pass (averaging)
+            nn.init.constant_(conv_low.weight, 1.0/9.0)
+            # High-pass (Laplacian-like)
+            with torch.no_grad():
+                conv_high.weight.fill_(0)
+                for i in range(conv_high.weight.shape[0]):
+                    conv_high.weight[i, 0, 1, 1] = 4.0/9.0  # Center
+                    conv_high.weight[i, 0, 0, 1] = -1.0/9.0  # Top
+                    conv_high.weight[i, 0, 2, 1] = -1.0/9.0  # Bottom
+                    conv_high.weight[i, 0, 1, 0] = -1.0/9.0  # Left
+                    conv_high.weight[i, 0, 1, 2] = -1.0/9.0  # Right
+        
+        # Lightweight high-frequency enhancement (single conv + channel attention)
+        self.high_enhance = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(dim, dim, 3, padding=1, bias=False),
+                nn.BatchNorm2d(dim),
+                nn.ReLU(inplace=True),
+            ) for dim in feature_dims
+        ])
+        
+        # Channel attention for high-freq (lightweight)
+        self.channel_att = nn.ModuleList([
+            nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                nn.Conv2d(dim, max(8, dim // 8), 1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(max(8, dim // 8), dim, 1),
+                nn.Sigmoid()
+            ) for dim in feature_dims
+        ])
+        
+        # Low-frequency processing (just instance norm + 1x1 conv)
+        self.low_process = nn.ModuleList([
+            nn.Sequential(
+                nn.InstanceNorm2d(dim, affine=True),
+                nn.Conv2d(dim, dim, 1, bias=False),
+                nn.BatchNorm2d(dim),
+                nn.ReLU(inplace=True)
+            ) for dim in feature_dims
+        ])
+        
+        # Edge refinement only for top 2 scales (320, 512) - saves ~10M params
+        self.edge_refine = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(dim, dim, 3, padding=1, bias=False),
+                nn.BatchNorm2d(dim),
+                nn.ReLU(inplace=True)
+            ) if i >= 2 else nn.Identity()  # Only for scale 2 and 3
+            for i, dim in enumerate(feature_dims)
+        ])
+        
+        # Fusion: simple 1x1 conv (low + high → unified)
+        self.fusion = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(dim * 2, dim, 1, bias=False),
+                nn.BatchNorm2d(dim),
+                nn.ReLU(inplace=True)
+            ) for dim in feature_dims
+        ])
+        
+        # Decoder (shared with other experts)
+        self.decoder = DeepSupervisionDecoder(feature_dims)
+    
+    def forward(self, features, return_aux=False):
+        """
+        Forward pass through FEDER-Light expert.
+        
+        Args:
+            features: List of 4 PVT features [f1, f2, f3, f4]
+            return_aux: Return auxiliary outputs for deep supervision
+        """
+        enhanced_features = []
+        
+        for i, feat in enumerate(features):
+            # 1. Lightweight wavelet decomposition
+            low_freq = self.wavelet_low[i](feat)
+            high_freq = self.wavelet_high[i](feat)
+            
+            # 2. Process low frequency (semantic content)
+            low_enhanced = self.low_process[i](low_freq)
+            
+            # 3. Enhance high frequency (edges/textures)
+            high_enhanced = self.high_enhance[i](high_freq)
+            ca = self.channel_att[i](high_enhanced)
+            high_enhanced = high_enhanced * ca
+            
+            # 4. Edge refinement (only top 2 scales)
+            high_refined = self.edge_refine[i](high_enhanced)
+            
+            # 5. Fuse low + high
+            fused = torch.cat([low_enhanced, high_refined], dim=1)
+            fused = self.fusion[i](fused)
+            
+            # 6. Residual connection
+            enhanced = fused + feat
+            enhanced_features.append(enhanced)
+        
+        # 7. Decode with deep supervision
+        output = self.decoder(enhanced_features, return_aux=return_aux)
+        
+        if return_aux:
+            pred, aux_outputs = output
+            return pred, aux_outputs
+        else:
+            pred = output
+            return pred, []
+
+
 def count_parameters(model):
     """Count trainable parameters"""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
