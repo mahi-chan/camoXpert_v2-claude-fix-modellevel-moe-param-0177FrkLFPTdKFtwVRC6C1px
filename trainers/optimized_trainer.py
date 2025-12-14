@@ -974,6 +974,10 @@ class OptimizedTrainer:
         """
         import torch.distributed as dist
         
+        # DDP barrier: ensure all processes are in sync before validation
+        if dist.is_initialized():
+            dist.barrier()
+        
         self.model.eval()
 
         val_loss = 0.0

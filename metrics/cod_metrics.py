@@ -187,7 +187,16 @@ class CODMetrics:
         return 2 * enhanced_matrix
 
     def compute_all(self, pred, target, threshold=0.5):
-        """Compute all metrics including accuracy metrics"""
+        """Compute all metrics including accuracy metrics
+        
+        NOTE: If pred contains raw logits (values outside 0-1), 
+        we apply sigmoid to convert to probabilities.
+        """
+        # Normalize predictions: apply sigmoid if values are outside [0,1]
+        pred = pred.detach()
+        if pred.min() < 0 or pred.max() > 1:
+            pred = torch.sigmoid(pred.clamp(-15, 15))
+        
         return {
             # Standard metrics
             'MAE': self.mae(pred, target),
