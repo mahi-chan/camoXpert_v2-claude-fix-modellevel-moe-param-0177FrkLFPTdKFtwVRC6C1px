@@ -620,12 +620,23 @@ def main():
     trainer.boundary_refinement = boundary_refinement
     trainer.training_args = args
 
+    # Initialize EMA if enabled
+    ema_model = None
+    if args.use_ema:
+        # Get base model (unwrap DDP if needed)
+        base_model = model.module if hasattr(model, 'module') else model
+        ema_model = EMA(base_model, decay=args.ema_decay)
+        if is_main_process:
+            print(f"✓ EMA enabled (decay={args.ema_decay})")
+
     if is_main_process:
         print("✓ OptimizedTrainer initialized with:")
         print(f"  - Cosine annealing with {args.warmup_epochs}-epoch warmup")
         print(f"  - Mixed precision: {args.use_amp}")
         print(f"  - Gradient accumulation: {args.accumulation_steps} steps")
         print(f"  - Progressive augmentation: {args.enable_progressive_aug}")
+        if args.use_ema:
+            print(f"  - EMA: Enabled (decay={args.ema_decay})")
         if args.num_experts > 1:
             print(f"  - MoE load balancing: Enabled")
             print(f"  - Expert collapse detection: Enabled")
@@ -687,14 +698,26 @@ def main():
         # Train one epoch with simple structure loss
         train_metrics = trainer.train_epoch(train_loader, epoch=epoch, log_interval=20)
 
+        # Update EMA after each epoch (if enabled)
+        if ema_model is not None:
+            ema_model.update()
+
         # Validate (run every val_freq epochs, or on last epoch, or on first epoch)
         should_validate = ((epoch + 1) % args.val_freq == 0) or (epoch == 0) or (epoch == args.epochs - 1)
 
         if should_validate:
+            # Use EMA weights for validation (more stable)
+            if ema_model is not None:
+                ema_model.apply_shadow()
+            
             val_metrics = trainer.validate(
                 val_loader,
                 metrics_fn=compute_metrics
             )
+            
+            # Restore original weights for continued training
+            if ema_model is not None:
+                ema_model.restore()
         else:
             # Skip validation, use previous metrics
             val_metrics = None

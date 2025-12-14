@@ -42,7 +42,8 @@ class SOTALoss(nn.Module):
         structure_weight: float = 0.5,
         pos_weight: float = 2.0,
         aux_weight: float = 0.1,
-        deep_weight: float = 0.4
+        deep_weight: float = 0.4,
+        label_smoothing: float = 0.1  # For better generalization
     ):
         super().__init__()
         
@@ -51,6 +52,7 @@ class SOTALoss(nn.Module):
         self.structure_weight = structure_weight
         self.aux_weight = aux_weight
         self.deep_weight = deep_weight
+        self.label_smoothing = label_smoothing
         
         # BCE with class balancing
         self.register_buffer('pos_weight_tensor', torch.tensor([pos_weight]))
@@ -61,11 +63,12 @@ class SOTALoss(nn.Module):
         self.pool_padding = self.pool_size // 2
         
         print("\n" + "="*60)
-        print("SOTA LOSS - Optimized for Generalization + Edge Precision")
+        print("SOTA LOSS - Optimized for Generalization")
         print("="*60)
-        print(f"  BCE weight:       {bce_weight:.1f} (edge-weighted, 5x on boundaries)")
+        print(f"  BCE weight:       {bce_weight:.1f} (edge-weighted, 2x on boundaries)")
         print(f"  IoU weight:       {iou_weight:.1f}")
         print(f"  Structure weight: {structure_weight:.1f}")
+        print(f"  Label smoothing:  {label_smoothing:.2f}")
         print(f"  Aux weight:       {aux_weight:.1f}")
         print(f"  Deep weight:      {deep_weight:.1f}")
         print("="*60 + "\n")
@@ -76,13 +79,14 @@ class SOTALoss(nn.Module):
     
     def bce_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
-        Edge-weighted BCE loss (PraNet-style).
-        Gives 5x weight to boundary regions for better edge precision.
-        Safe with AMP (autocast).
+        Edge-weighted BCE loss with label smoothing for better generalization.
         """
-        # Compute edge weight map: 1 + 5 * |local_avg - mask|
-        # Using 15x15 kernel (faster than 31x31, still effective)
-        weit = 1 + 5 * torch.abs(
+        # Apply label smoothing: smooth 0 -> eps, 1 -> 1-eps
+        if self.label_smoothing > 0:
+            targets = targets * (1 - self.label_smoothing) + 0.5 * self.label_smoothing
+        
+        # Compute edge weight map: 1 + 2 * |local_avg - mask|
+        weit = 1 + 2 * torch.abs(
             F.avg_pool2d(targets, kernel_size=15, stride=1, padding=7) - targets
         )
         
