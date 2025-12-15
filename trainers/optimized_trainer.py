@@ -1016,6 +1016,10 @@ class OptimizedTrainer:
                 if preds_prob.shape[2:] != masks.shape[2:]:
                     preds_prob = F.interpolate(preds_prob, size=masks.shape[2:], mode='bilinear', align_corners=False)
                 
+                # Create CODMetrics once per batch (not per image)
+                from metrics.cod_metrics import CODMetrics
+                metrics_calc = CODMetrics()
+                
                 for i in range(batch_size):
                     p = preds_prob[i, 0]  # [H, W]
                     t = masks[i, 0]       # [H, W]
@@ -1023,9 +1027,8 @@ class OptimizedTrainer:
                     # MAE
                     total_mae += torch.abs(p - t).mean().item()
                     
-                    # S-measure (Dice-based approximation)
-                    inter_soft = (p * t).sum()
-                    total_s += ((2 * inter_soft + 1e-6) / (p.sum() + t.sum() + 1e-6)).item()
+                    # S-measure - use proper CODMetrics (created above)
+                    total_s += metrics_calc.s_measure(preds_prob[i:i+1], masks[i:i+1])
                     
                     # Binary mask for IoU/F-measure (0.5 threshold)
                     p_bin = (p > 0.5).float()
