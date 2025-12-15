@@ -722,12 +722,7 @@ class OptimizedTrainer:
         self.enable_collapse_detection = enable_collapse_detection and num_experts is not None
 
         if self.enable_load_balancing:
-            # Increased weights (0.01 -> 0.05) for hard MoE stability
-            self.load_balancer = GlobalBatchLoadBalancer(
-                num_experts=num_experts,
-                alpha_l2=0.05,  # L2 loss weight (was 0.01)
-                alpha_cv=0.05   # CV loss weight (was 0.01)
-            )
+            self.load_balancer = GlobalBatchLoadBalancer(num_experts=num_experts)
         else:
             self.load_balancer = None
 
