@@ -444,15 +444,17 @@ def create_optimizer_and_criterion(model, args, is_main_process):
     # Select loss function based on type
     if loss_type == 'sota':
         # RECOMMENDED: SOTA-aligned loss (BCE + IoU + Structure)
+        # IoU weight increased to 1.5 to push for better segmentation accuracy
+        # (IoU is typically the bottleneck metric that lags behind S-measure)
         criterion = SOTALoss(
             bce_weight=1.0,
-            iou_weight=1.0,
+            iou_weight=1.5,  # Increased from 1.0 for better IoU/F-measure
             structure_weight=0.5,
             pos_weight=args.pos_weight,
             aux_weight=0.1,
             deep_weight=0.4
         )
-        loss_name = "SOTALoss (BCE+IoU+Structure)"
+        loss_name = "SOTALoss (BCE+IoU×1.5+Structure)"
 
     elif loss_type == 'sota-tversky':
         # For under-segmentation issues
@@ -571,26 +573,26 @@ def compute_metrics(predictions, targets):
     }
 
 
+# Singleton CODMetrics instance for S-measure computation
+_cod_metrics_singleton = None
+
+def _get_cod_metrics():
+    """Get singleton CODMetrics instance for efficient S-measure calculation."""
+    global _cod_metrics_singleton
+    if _cod_metrics_singleton is None:
+        _cod_metrics_singleton = CODMetrics()
+    return _cod_metrics_singleton
+
+
 def compute_s_measure(pred, target, alpha=0.5):
     """
-    Compute Structure Measure for a batch.
+    Compute official Structure Measure for a batch using CODMetrics.
+    
+    This uses the proper S-measure formula with object-aware and region-based
+    components (SSIM-like), not the simplified Dice-based approximation.
     """
-    y = target.mean()
-    if y == 0:
-        return (1.0 - pred.mean()).item()
-    elif y == 1:
-        return pred.mean().item()
-    else:
-        # Object-aware S-measure
-        pred_fg = pred * target
-        pred_bg = (1 - pred) * (1 - target)
-        
-        # Simple S-measure approximation
-        s_obj = 2 * (pred * target).sum() / (pred.sum() + target.sum() + 1e-6)
-        s_bg = 2 * ((1-pred) * (1-target)).sum() / ((1-pred).sum() + (1-target).sum() + 1e-6)
-        
-        Q = alpha * s_obj + (1 - alpha) * s_bg
-        return Q.item()
+    metrics = _get_cod_metrics()
+    return metrics.s_measure(pred, target, alpha=alpha)
 
 
 # UNUSED: train_epoch_with_additional_losses - removed for simplicity
