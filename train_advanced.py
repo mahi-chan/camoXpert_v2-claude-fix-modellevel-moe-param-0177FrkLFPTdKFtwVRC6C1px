@@ -526,13 +526,6 @@ def compute_metrics(predictions, targets):
     
     IMPORTANT: Must compute metrics per-image then average (like evaluate.py).
     CODMetrics methods sum all pixels, so passing a full batch gives wrong results.
-    
-    Args:
-        predictions: Logits from model [B, 1, H, W]
-        targets: Ground truth masks [B, 1, H, W]
-    
-    Returns:
-        Dictionary of metric values (scalar per batch)
     """
     # Get singleton metrics calculator
     metrics_calc = _get_cod_metrics()
@@ -544,6 +537,18 @@ def compute_metrics(predictions, targets):
     # Ensure dimensions match
     if preds_prob.shape[2:] != targets.shape[2:]:
         preds_prob = F.interpolate(preds_prob, size=targets.shape[2:], mode='bilinear', align_corners=False)
+    
+    # DEBUG: Print prediction statistics (first batch only)
+    global _debug_metric_counter
+    if '_debug_metric_counter' not in globals():
+        _debug_metric_counter = 0
+    _debug_metric_counter += 1
+    if _debug_metric_counter <= 3:  # Only first 3 batches
+        pred_bin = (preds_prob > 0.5).float()
+        print(f"\n[DEBUG] Batch {_debug_metric_counter}:")
+        print(f"  Pred prob: min={preds_prob.min():.3f}, max={preds_prob.max():.3f}, mean={preds_prob.mean():.3f}")
+        print(f"  Pred binary ratio: {pred_bin.mean():.3f} (fraction of 1s)")
+        print(f"  Target ratio: {targets.mean():.3f}")
     
     # Compute metrics PER IMAGE (critical - CODMetrics sums all pixels)
     batch_size = preds_prob.shape[0]
@@ -564,6 +569,10 @@ def compute_metrics(predictions, targets):
         iou_sum += metrics_calc.iou(pred_i, tgt_i, threshold=0.5)
         f_sum += metrics_calc.f_measure(pred_i, tgt_i, threshold=0.5)
         s_sum += metrics_calc.s_measure(pred_i, tgt_i)
+    
+    # DEBUG: Print computed values for first batch
+    if _debug_metric_counter <= 3:
+        print(f"  Computed: IoU={iou_sum/batch_size:.4f}, F={f_sum/batch_size:.4f}, S={s_sum/batch_size:.4f}")
     
     # Average across batch
     return {
