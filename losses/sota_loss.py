@@ -39,16 +39,18 @@ class SOTALoss(nn.Module):
         self,
         bce_weight: float = 1.0,
         iou_weight: float = 1.0,
+        dice_weight: float = 1.0,  # NEW: Directly optimizes F-measure
         structure_weight: float = 0.5,
         pos_weight: float = 2.0,
         aux_weight: float = 0.1,
         deep_weight: float = 0.4,
-        label_smoothing: float = 0.1  # For better generalization
+        label_smoothing: float = 0.05  # Reduced from 0.1 for sharper predictions
     ):
         super().__init__()
         
         self.bce_weight = bce_weight
         self.iou_weight = iou_weight
+        self.dice_weight = dice_weight  # NEW
         self.structure_weight = structure_weight
         self.aux_weight = aux_weight
         self.deep_weight = deep_weight
@@ -63,10 +65,11 @@ class SOTALoss(nn.Module):
         self.pool_padding = self.pool_size // 2
         
         print("\n" + "="*60)
-        print("SOTA LOSS - Optimized for Generalization")
+        print("SOTA LOSS - Aggressive Optimization")
         print("="*60)
         print(f"  BCE weight:       {bce_weight:.1f} (edge-weighted, 2x on boundaries)")
         print(f"  IoU weight:       {iou_weight:.1f}")
+        print(f"  Dice weight:      {dice_weight:.1f} (optimizes F-measure)")
         print(f"  Structure weight: {structure_weight:.1f}")
         print(f"  Label smoothing:  {label_smoothing:.2f}")
         print(f"  Aux weight:       {aux_weight:.1f}")
@@ -119,6 +122,27 @@ class SOTALoss(nn.Module):
         iou = (intersection + smooth) / (union + smooth)
         
         return 1 - iou.mean()
+    
+    def dice_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Soft Dice loss - directly optimizes F-measure/Dice metric.
+        F-measure is closely related to Dice: F1 = Dice.
+        """
+        logits = torch.clamp(logits, min=-15, max=15)
+        probs = torch.sigmoid(logits)
+        
+        # Flatten spatial dimensions
+        probs_flat = probs.view(probs.size(0), -1)
+        targets_flat = targets.view(targets.size(0), -1)
+        
+        # Dice = 2*intersection / (sum_pred + sum_target)
+        smooth = 1.0
+        intersection = (probs_flat * targets_flat).sum(dim=1)
+        denominator = probs_flat.sum(dim=1) + targets_flat.sum(dim=1)
+        
+        dice = (2 * intersection + smooth) / (denominator + smooth)
+        
+        return 1 - dice.mean()
     
     def structure_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
@@ -210,12 +234,14 @@ class SOTALoss(nn.Module):
         # Core losses
         bce = self.bce_loss(logits, targets)
         iou = self.iou_loss(logits, targets)
+        dice = self.dice_loss(logits, targets)  # NEW: optimizes F-measure
         structure = self.structure_loss(logits, targets)
         
-        # Weighted combination
+        # Weighted combination (4-component loss)
         total_loss = (
             self.bce_weight * bce +
             self.iou_weight * iou +
+            self.dice_weight * dice +
             self.structure_weight * structure
         )
         

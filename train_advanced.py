@@ -443,18 +443,18 @@ def create_optimizer_and_criterion(model, args, is_main_process):
 
     # Select loss function based on type
     if loss_type == 'sota':
-        # RECOMMENDED: SOTA-aligned loss (BCE + IoU + Structure)
-        # IoU weight increased to 1.5 to push for better segmentation accuracy
-        # (IoU is typically the bottleneck metric that lags behind S-measure)
+        # AGGRESSIVE: Push hard on IoU and F-measure to reach SOTA
+        # IoU=2.0 (bottleneck metric), Dice=1.0 (optimizes F-measure)
         criterion = SOTALoss(
             bce_weight=1.0,
-            iou_weight=1.5,  # Increased from 1.0 for better IoU/F-measure
+            iou_weight=2.0,   # Aggressive push for IoU
+            dice_weight=1.0,  # Directly optimizes F-measure
             structure_weight=0.5,
             pos_weight=args.pos_weight,
             aux_weight=0.1,
             deep_weight=0.4
         )
-        loss_name = "SOTALoss (BCE+IoU×1.5+Structure)"
+        loss_name = "SOTALoss (BCE+IoU×2+Dice+Structure) [AGGRESSIVE]"
 
     elif loss_type == 'sota-tversky':
         # For under-segmentation issues
