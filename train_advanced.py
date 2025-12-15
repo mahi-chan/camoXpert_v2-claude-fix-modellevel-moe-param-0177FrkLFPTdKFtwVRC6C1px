@@ -593,6 +593,13 @@ def compute_metrics(predictions, targets):
             print(f"  tp={tp.item():.0f}, fp={fp.item():.0f}, fn={fn.item():.0f}")
             print(f"  iou_i={iou_i:.4f}, f_i={f_i:.4f}")
     
+    # DEBUG: Print exact return values for first 2 batches
+    if _metric_debug_count <= 2:
+        final_iou = iou_sum / batch_size
+        final_f = f_sum / batch_size
+        print(f"\n[DEBUG RETURN] Batch {_metric_debug_count}: iou_sum={iou_sum:.6f}, f_sum={f_sum:.6f}")
+        print(f"  Returning: val_iou={final_iou:.6f}, val_f_measure={final_f:.6f}")
+    
     # Average across batch
     return {
         'val_mae': mae_sum / batch_size,
