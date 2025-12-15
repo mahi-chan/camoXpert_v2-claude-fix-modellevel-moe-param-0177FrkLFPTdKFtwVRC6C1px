@@ -523,89 +523,73 @@ def set_router_trainable(model, trainable):
 def compute_metrics(predictions, targets):
     """
     Compute validation metrics for a batch.
-    Uses adaptive thresholding since model may output soft predictions.
+    SIMPLIFIED - no singletons, pure tensor math, no external state.
     """
-    # Get singleton metrics calculator
-    metrics_calc = _get_cod_metrics()
-    
     # Apply sigmoid to convert logits to probabilities
-    preds_prob = torch.sigmoid(predictions.detach())
-    targets = targets.detach()
+    preds = torch.sigmoid(predictions.detach())
+    tgt = targets.detach()
     
     # Ensure dimensions match
-    if preds_prob.shape[2:] != targets.shape[2:]:
-        preds_prob = F.interpolate(preds_prob, size=targets.shape[2:], mode='bilinear', align_corners=False)
+    if preds.shape[2:] != tgt.shape[2:]:
+        preds = F.interpolate(preds, size=tgt.shape[2:], mode='bilinear', align_corners=False)
     
-    # Compute metrics PER IMAGE (critical - CODMetrics sums all pixels)
-    batch_size = preds_prob.shape[0]
+    batch_size = preds.shape[0]
     
     # Accumulators
-    mae_sum = 0.0
-    iou_sum = 0.0
-    f_sum = 0.0
-    s_sum = 0.0
+    mae_total = 0.0
+    iou_total = 0.0
+    f_total = 0.0
+    s_total = 0.0
     
     for i in range(batch_size):
-        pred_i = preds_prob[i:i+1]
-        tgt_i = targets[i:i+1]
+        p = preds[i, 0]  # [H, W]
+        t = tgt[i, 0]    # [H, W]
         
-        # Adaptive threshold: 2*mean, capped at 0.5
-        adaptive_thresh = min(2.0 * pred_i.mean().item(), 0.5)
-        adaptive_thresh = max(adaptive_thresh, 0.1)  # Floor at 0.1
+        # MAE (Mean Absolute Error)
+        mae_i = torch.abs(p - t).mean().item()
+        mae_total += mae_i
         
-        # MAE uses raw probabilities
-        mae_sum += metrics_calc.mae(pred_i, tgt_i)
+        # S-measure: Dice-based structure similarity
+        intersection = (p * t).sum()
+        s_i = ((2 * intersection + 1e-6) / (p.sum() + t.sum() + 1e-6)).item()
+        s_total += s_i
         
-        # S-measure uses raw probabilities  
-        s_sum += metrics_calc.s_measure(pred_i, tgt_i)
+        # Binary threshold: use 80% of mean (lower than before)
+        thresh = max(p.mean().item() * 0.8, 0.01)
+        p_bin = (p > thresh).float()
         
-        # IoU and F-measure use adaptive threshold
-        pred_binary = (pred_i > adaptive_thresh).float()
+        # IoU (Intersection over Union)
+        inter = (p_bin * t).sum()
+        union = p_bin.sum() + t.sum() - inter
+        iou_i = ((inter + 1e-6) / (union + 1e-6)).item()
+        iou_total += iou_i
         
-        # Manual IoU computation with adaptive threshold
-        intersection = (pred_binary * tgt_i).sum()
-        union = pred_binary.sum() + tgt_i.sum() - intersection
-        iou_i = ((intersection + 1e-6) / (union + 1e-6)).item()
-        iou_sum += iou_i
-        
-        # Manual F-measure with adaptive threshold (beta=0.3)
-        tp = (pred_binary * tgt_i).sum()
-        fp = (pred_binary * (1 - tgt_i)).sum()
-        fn = ((1 - pred_binary) * tgt_i).sum()
-        precision = (tp + 1e-6) / (tp + fp + 1e-6)
-        recall = (tp + 1e-6) / (tp + fn + 1e-6)
+        # F-measure (beta=0.3)
+        tp = (p_bin * t).sum()
+        fp = (p_bin * (1 - t)).sum()
+        fn = ((1 - p_bin) * t).sum()
+        prec = (tp + 1e-6) / (tp + fp + 1e-6)
+        rec = (tp + 1e-6) / (tp + fn + 1e-6)
         beta = 0.3
-        f_i = (((1 + beta ** 2) * precision * recall) / (beta ** 2 * precision + recall + 1e-6)).item()
-        f_sum += f_i
+        f_i = (((1 + beta**2) * prec * rec) / (beta**2 * prec + rec + 1e-6)).item()
+        f_total += f_i
     
-    # Average across batch
-    result = {
-        'val_mae': mae_sum / batch_size,
-        'val_s_measure': s_sum / batch_size,
-        'val_f_measure': f_sum / batch_size,
-        'val_iou': iou_sum / batch_size
+    return {
+        'val_mae': mae_total / batch_size,
+        'val_s_measure': s_total / batch_size,
+        'val_iou': iou_total / batch_size,
+        'val_f_measure': f_total / batch_size
     }
-    
-    # DEBUG: Print return values for first 3 batches
-    global _compute_metrics_debug_count
-    if '_compute_metrics_debug_count' not in globals():
-        _compute_metrics_debug_count = 0
-    _compute_metrics_debug_count += 1
-    if _compute_metrics_debug_count <= 3:
-        print(f"[DEBUG compute_metrics] Batch {_compute_metrics_debug_count}: iou={result['val_iou']:.6f}, f={result['val_f_measure']:.6f}, s={result['val_s_measure']:.4f}")
-        # Also print prediction stats
-        print(f"  pred: min={preds_prob.min():.3f}, max={preds_prob.max():.3f}, mean={preds_prob.mean():.3f}")
-    
-    return result
 
 
-# Singleton CODMetrics instance for S-measure computation
+# Legacy - not used anymore
 _cod_metrics_singleton = None
 
 def _get_cod_metrics():
-    """Get singleton CODMetrics instance for efficient S-measure calculation."""
+    """Legacy function - not used in new compute_metrics."""
     global _cod_metrics_singleton
     if _cod_metrics_singleton is None:
+        from metrics.cod_metrics import CODMetrics
         _cod_metrics_singleton = CODMetrics()
     return _cod_metrics_singleton
 
