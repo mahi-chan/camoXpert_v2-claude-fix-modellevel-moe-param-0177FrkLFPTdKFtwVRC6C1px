@@ -1043,10 +1043,23 @@ class OptimizedTrainer:
         def weighted_sum(lst):
             return sum(v * w for v, w in lst)
         
-        iou_sum = weighted_sum(running_metrics.get('val_iou_list', []))
-        f_sum = weighted_sum(running_metrics.get('val_f_measure_list', []))
-        mae_sum = weighted_sum(running_metrics.get('val_mae_list', []))
-        s_sum = weighted_sum(running_metrics.get('val_s_measure_list', []))
+        iou_list = running_metrics.get('val_iou_list', [])
+        f_list = running_metrics.get('val_f_measure_list', [])
+        mae_list = running_metrics.get('val_mae_list', [])
+        s_list = running_metrics.get('val_s_measure_list', [])
+        
+        # DEBUG: Print first 3 and last 3 values from each list
+        if len(iou_list) > 0:
+            print(f"[DEBUG LISTS] iou_list length={len(iou_list)}")
+            print(f"  First 3: {iou_list[:3]}")
+            print(f"  Last 3: {iou_list[-3:]}")
+        
+        iou_sum = weighted_sum(iou_list)
+        f_sum = weighted_sum(f_list)
+        mae_sum = weighted_sum(mae_list)
+        s_sum = weighted_sum(s_list)
+        
+        print(f"[DEBUG SUMS] iou_sum={iou_sum:.6f}, s_sum={s_sum:.2f}, num_samples={num_samples}")
         
         # Build metrics dict
         metrics = {
