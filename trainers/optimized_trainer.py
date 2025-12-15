@@ -1039,6 +1039,9 @@ class OptimizedTrainer:
         # Compute local averages
         avg_loss = val_loss / max(num_samples, 1)
         
+        # DEBUG: Print running_metrics before division
+        print(f"[DEBUG] running_metrics BEFORE division: iou={running_metrics.get('val_iou', 'N/A')}, f={running_metrics.get('val_f_measure', 'N/A')}, samples={num_samples}")
+        
         # Build metrics dict explicitly
         metrics = {
             'val_loss': avg_loss,
