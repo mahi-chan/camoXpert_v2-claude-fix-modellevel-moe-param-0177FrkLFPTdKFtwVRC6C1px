@@ -554,9 +554,8 @@ def compute_metrics(predictions, targets):
         s_i = ((2 * intersection + 1e-6) / (p.sum() + t.sum() + 1e-6)).item()
         s_total += s_i
         
-        # Binary threshold: use 80% of mean (lower than before)
-        thresh = max(p.mean().item() * 0.8, 0.01)
-        p_bin = (p > thresh).float()
+        # Binary threshold: use standard 0.5 for fair comparison with evaluation
+        p_bin = (p > 0.5).float()
         
         # IoU (Intersection over Union)
         inter = (p_bin * t).sum()
