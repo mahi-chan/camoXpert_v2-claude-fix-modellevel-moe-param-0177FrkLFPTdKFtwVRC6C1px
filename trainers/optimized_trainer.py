@@ -1023,11 +1023,20 @@ class OptimizedTrainer:
                 if metrics_fn is not None:
                     batch_metrics = metrics_fn(predictions, masks)
                     
+                    # DEBUG: Print batch_metrics for first 3 batches
+                    if num_batches <= 3:
+                        print(f"\n[DEBUG TRAINER LOOP] Batch {num_batches}:")
+                        print(f"  batch_metrics received: {batch_metrics}")
+                    
                     # Accumulate weighted by batch size
                     for key, value in batch_metrics.items():
                         if key not in running_metrics:
                             running_metrics[key] = 0.0
                         running_metrics[key] += value * batch_size
+                    
+                    # DEBUG: Print running_metrics after first 3 batches
+                    if num_batches <= 3:
+                        print(f"  running_metrics after: val_iou={running_metrics.get('val_iou', 'N/A')}, val_f_measure={running_metrics.get('val_f_measure', 'N/A')}")
 
         # Compute local averages
         avg_loss = val_loss / max(num_samples, 1)
