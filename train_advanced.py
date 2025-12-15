@@ -522,7 +522,10 @@ def set_router_trainable(model, trainable):
 
 def compute_metrics(predictions, targets):
     """
-    Compute validation metrics for a batch using CODMetrics.
+    Compute validation metrics for a batch.
+    
+    IMPORTANT: Must compute metrics per-image then average (like evaluate.py).
+    CODMetrics methods sum all pixels, so passing a full batch gives wrong results.
     
     Args:
         predictions: Logits from model [B, 1, H, W]
@@ -542,15 +545,32 @@ def compute_metrics(predictions, targets):
     if preds_prob.shape[2:] != targets.shape[2:]:
         preds_prob = F.interpolate(preds_prob, size=targets.shape[2:], mode='bilinear', align_corners=False)
     
-    # Use CODMetrics for all metrics (consistent with evaluate.py)
-    # CODMetrics handles sigmoid check internally
-    all_metrics = metrics_calc.compute_all(preds_prob, targets, threshold=0.5)
+    # Compute metrics PER IMAGE (critical - CODMetrics sums all pixels)
+    batch_size = preds_prob.shape[0]
     
+    # Accumulators
+    mae_sum = 0.0
+    iou_sum = 0.0
+    f_sum = 0.0
+    s_sum = 0.0
+    
+    for i in range(batch_size):
+        # Extract single image [1, 1, H, W]
+        pred_i = preds_prob[i:i+1]
+        tgt_i = targets[i:i+1]
+        
+        # Use CODMetrics for each image (like evaluate.py line 434-439)
+        mae_sum += metrics_calc.mae(pred_i, tgt_i)
+        iou_sum += metrics_calc.iou(pred_i, tgt_i, threshold=0.5)
+        f_sum += metrics_calc.f_measure(pred_i, tgt_i, threshold=0.5)
+        s_sum += metrics_calc.s_measure(pred_i, tgt_i)
+    
+    # Average across batch
     return {
-        'val_mae': all_metrics['MAE'],
-        'val_s_measure': all_metrics['S-measure'],
-        'val_f_measure': all_metrics['F-measure'],
-        'val_iou': all_metrics['IoU']
+        'val_mae': mae_sum / batch_size,
+        'val_s_measure': s_sum / batch_size,
+        'val_f_measure': f_sum / batch_size,
+        'val_iou': iou_sum / batch_size
     }
 
 
