@@ -545,13 +545,6 @@ def compute_metrics(predictions, targets):
     f_sum = 0.0
     s_sum = 0.0
     
-    # Debug counter for first batch
-    global _metric_debug_count
-    if '_metric_debug_count' not in globals():
-        _metric_debug_count = 0
-    _metric_debug_count += 1
-    do_debug = _metric_debug_count == 1  # Only first batch
-    
     for i in range(batch_size):
         pred_i = preds_prob[i:i+1]
         tgt_i = targets[i:i+1]
@@ -584,21 +577,6 @@ def compute_metrics(predictions, targets):
         beta = 0.3
         f_i = (((1 + beta ** 2) * precision * recall) / (beta ** 2 * precision + recall + 1e-6)).item()
         f_sum += f_i
-        
-        # DEBUG: First 2 images of first batch
-        if do_debug and i < 2:
-            print(f"\n[DEBUG IMG {i}] pred: min={pred_i.min():.3f} max={pred_i.max():.3f} mean={pred_i.mean():.3f}")
-            print(f"  adaptive_thresh={adaptive_thresh:.3f}, pred_binary.sum()={pred_binary.sum().item():.0f}")
-            print(f"  tgt.sum()={tgt_i.sum().item():.0f}, intersection={intersection.item():.0f}, union={union.item():.0f}")
-            print(f"  tp={tp.item():.0f}, fp={fp.item():.0f}, fn={fn.item():.0f}")
-            print(f"  iou_i={iou_i:.4f}, f_i={f_i:.4f}")
-    
-    # DEBUG: Print exact return values for first 2 batches
-    if _metric_debug_count <= 2:
-        final_iou = iou_sum / batch_size
-        final_f = f_sum / batch_size
-        print(f"\n[DEBUG RETURN] Batch {_metric_debug_count}: iou_sum={iou_sum:.6f}, f_sum={f_sum:.6f}")
-        print(f"  Returning: val_iou={final_iou:.6f}, val_f_measure={final_f:.6f}")
     
     # Average across batch
     return {

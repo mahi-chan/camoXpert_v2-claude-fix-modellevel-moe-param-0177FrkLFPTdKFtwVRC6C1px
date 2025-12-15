@@ -1023,62 +1023,55 @@ class OptimizedTrainer:
                 if metrics_fn is not None:
                     batch_metrics = metrics_fn(predictions, masks)
                     
-                    # DEBUG: Print batch_metrics for first 3 batches
-                    if num_batches <= 3:
-                        print(f"\n[DEBUG TRAINER LOOP] Batch {num_batches}:")
-                        print(f"  batch_metrics received: {batch_metrics}")
+                    # EXPLICIT accumulation - no dict magic
+                    if 'val_iou' not in running_metrics:
+                        running_metrics['val_iou'] = 0.0
+                        running_metrics['val_f_measure'] = 0.0
+                        running_metrics['val_mae'] = 0.0
+                        running_metrics['val_s_measure'] = 0.0
                     
-                    # Accumulate weighted by batch size
-                    for key, value in batch_metrics.items():
-                        if key not in running_metrics:
-                            running_metrics[key] = 0.0
-                        running_metrics[key] += value * batch_size
-                    
-                    # DEBUG: Print running_metrics after first 3 batches
-                    if num_batches <= 3:
-                        print(f"  running_metrics after: val_iou={running_metrics.get('val_iou', 'N/A')}, val_f_measure={running_metrics.get('val_f_measure', 'N/A')}")
+                    # Add this batch's contribution (value already averaged per batch)
+                    running_metrics['val_iou'] += batch_metrics.get('val_iou', 0.0) * batch_size
+                    running_metrics['val_f_measure'] += batch_metrics.get('val_f_measure', 0.0) * batch_size
+                    running_metrics['val_mae'] += batch_metrics.get('val_mae', 0.0) * batch_size
+                    running_metrics['val_s_measure'] += batch_metrics.get('val_s_measure', 0.0) * batch_size
 
         # Compute local averages
         avg_loss = val_loss / max(num_samples, 1)
-        metrics = {'val_loss': avg_loss}
-
-        # Average the accumulated metrics
-        for key, value in running_metrics.items():
-            metrics[key] = value / max(num_samples, 1)
-
-        # DEBUG: Print local metrics before DDP sync
-        print(f"\n[DEBUG TRAINER] Before DDP sync:")
-        print(f"  num_samples = {num_samples}")
-        for k, v in metrics.items():
-            print(f"  {k} = {v:.4f}")
+        
+        # Build metrics dict explicitly
+        metrics = {
+            'val_loss': avg_loss,
+            'val_iou': running_metrics.get('val_iou', 0.0) / max(num_samples, 1),
+            'val_f_measure': running_metrics.get('val_f_measure', 0.0) / max(num_samples, 1),
+            'val_mae': running_metrics.get('val_mae', 0.0) / max(num_samples, 1),
+            'val_s_measure': running_metrics.get('val_s_measure', 0.0) / max(num_samples, 1)
+        }
 
         # Synchronize metrics across DDP ranks for full validation
         if dist.is_initialized():
-            # Collect metric sums + val_loss sum + sample count
-            metric_keys = sorted([k for k in running_metrics.keys()])
-            
-            # Build sync tensor: [metric_sum_1, ..., val_loss_sum, num_samples]
-            sync_data = [running_metrics.get(k, 0.0) for k in metric_keys]
-            sync_data.append(val_loss)
-            sync_data.append(float(num_samples))
-            
-            sync_tensor = torch.tensor(sync_data, device=self.device, dtype=torch.float32)
+            # Explicit sync tensor: [iou_sum, f_sum, mae_sum, s_sum, val_loss, num_samples]
+            sync_tensor = torch.tensor([
+                running_metrics.get('val_iou', 0.0),
+                running_metrics.get('val_f_measure', 0.0),
+                running_metrics.get('val_mae', 0.0),
+                running_metrics.get('val_s_measure', 0.0),
+                val_loss,
+                float(num_samples)
+            ], device=self.device, dtype=torch.float32)
             
             # All-reduce to sum across ranks
             dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
             
             # Compute global averages
-            total_samples = sync_tensor[-1].item()
-            metrics = {}
-            for i, key in enumerate(metric_keys):
-                metrics[key] = sync_tensor[i].item() / max(total_samples, 1)
-            metrics['val_loss'] = sync_tensor[-2].item() / max(total_samples, 1)
-            
-            # DEBUG: Print after DDP sync  
-            print(f"[DEBUG TRAINER] After DDP sync:")
-            print(f"  total_samples = {total_samples}")
-            for k, v in metrics.items():
-                print(f"  {k} = {v:.4f}")
+            total_samples = sync_tensor[5].item()
+            metrics = {
+                'val_iou': sync_tensor[0].item() / max(total_samples, 1),
+                'val_f_measure': sync_tensor[1].item() / max(total_samples, 1),
+                'val_mae': sync_tensor[2].item() / max(total_samples, 1),
+                'val_s_measure': sync_tensor[3].item() / max(total_samples, 1),
+                'val_loss': sync_tensor[4].item() / max(total_samples, 1)
+            }
 
         return metrics
 
