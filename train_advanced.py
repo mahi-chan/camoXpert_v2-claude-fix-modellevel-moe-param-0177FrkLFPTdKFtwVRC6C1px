@@ -519,27 +519,78 @@ def set_router_trainable(model, trainable):
 
 
 def compute_metrics(predictions, targets):
-    """Compute validation metrics."""
-    metrics = CODMetrics()
-
-    # Threshold predictions (predictions are already sigmoid'd in the model)
-    preds_binary = (torch.sigmoid(predictions) > 0.5).float()
-
-    # Use continuous predictions for S-measure (more accurate)
-    preds_continuous = torch.sigmoid(predictions)
-
-    # Compute metrics using correct method names
-    mae = metrics.mae(preds_binary, targets)
-    s_measure = metrics.s_measure(preds_continuous, targets)  # PRIMARY METRIC
-    f_measure = metrics.f_measure(preds_binary, targets)
-    iou = metrics.iou(preds_binary, targets)  # Secondary
-
+    """
+    Compute validation metrics for a batch.
+    
+    Args:
+        predictions: Logits from model [B, 1, H, W]
+        targets: Ground truth masks [B, 1, H, W]
+    
+    Returns:
+        Dictionary of metric values (scalar per batch)
+    """
+    # Apply sigmoid to convert logits to probabilities
+    preds_prob = torch.sigmoid(predictions.detach())
+    targets = targets.detach()
+    
+    # Binary predictions for hard metrics (IoU, F-measure)
+    threshold = 0.5
+    preds_binary = (preds_prob > threshold).float()
+    
+    # Ensure dimensions match
+    if preds_binary.shape != targets.shape:
+        preds_binary = F.interpolate(preds_binary, size=targets.shape[2:], mode='bilinear', align_corners=False)
+        preds_prob = F.interpolate(preds_prob, size=targets.shape[2:], mode='bilinear', align_corners=False)
+    
+    # Compute metrics directly (not via CODMetrics class for clarity)
+    # IoU = intersection / union
+    intersection = (preds_binary * targets).sum()
+    union = preds_binary.sum() + targets.sum() - intersection
+    iou = (intersection + 1e-6) / (union + 1e-6)
+    
+    # F-measure with beta=0.3 (COD standard)
+    beta = 0.3
+    tp = (preds_binary * targets).sum()
+    fp = (preds_binary * (1 - targets)).sum()
+    fn = ((1 - preds_binary) * targets).sum()
+    precision = (tp + 1e-6) / (tp + fp + 1e-6)
+    recall = (tp + 1e-6) / (tp + fn + 1e-6)
+    f_measure = ((1 + beta ** 2) * precision * recall) / (beta ** 2 * precision + recall + 1e-6)
+    
+    # S-measure (use probability for continuous prediction)
+    s_measure = compute_s_measure(preds_prob, targets)
+    
+    # MAE
+    mae = torch.abs(preds_prob - targets).mean()
+    
     return {
-        'val_mae': mae,
-        'val_s_measure': s_measure,  # PRIMARY
-        'val_f_measure': f_measure,
-        'val_iou': iou  # Secondary
+        'val_mae': mae.item(),
+        'val_s_measure': s_measure,
+        'val_f_measure': f_measure.item(),
+        'val_iou': iou.item()
     }
+
+
+def compute_s_measure(pred, target, alpha=0.5):
+    """
+    Compute Structure Measure for a batch.
+    """
+    y = target.mean()
+    if y == 0:
+        return (1.0 - pred.mean()).item()
+    elif y == 1:
+        return pred.mean().item()
+    else:
+        # Object-aware S-measure
+        pred_fg = pred * target
+        pred_bg = (1 - pred) * (1 - target)
+        
+        # Simple S-measure approximation
+        s_obj = 2 * (pred * target).sum() / (pred.sum() + target.sum() + 1e-6)
+        s_bg = 2 * ((1-pred) * (1-target)).sum() / ((1-pred).sum() + (1-target).sum() + 1e-6)
+        
+        Q = alpha * s_obj + (1 - alpha) * s_bg
+        return Q.item()
 
 
 # UNUSED: train_epoch_with_additional_losses - removed for simplicity
