@@ -522,7 +522,7 @@ def set_router_trainable(model, trainable):
 
 def compute_metrics(predictions, targets):
     """
-    Compute validation metrics for a batch.
+    Compute validation metrics for a batch using CODMetrics.
     
     Args:
         predictions: Logits from model [B, 1, H, W]
@@ -531,58 +531,26 @@ def compute_metrics(predictions, targets):
     Returns:
         Dictionary of metric values (scalar per batch)
     """
+    # Get singleton metrics calculator
+    metrics_calc = _get_cod_metrics()
+    
     # Apply sigmoid to convert logits to probabilities
     preds_prob = torch.sigmoid(predictions.detach())
     targets = targets.detach()
     
-    # Ensure dimensions match BEFORE thresholding
+    # Ensure dimensions match
     if preds_prob.shape[2:] != targets.shape[2:]:
         preds_prob = F.interpolate(preds_prob, size=targets.shape[2:], mode='bilinear', align_corners=False)
     
-    # Binary predictions for hard metrics (IoU, F-measure)
-    # Must threshold AFTER interpolation to get clean binary mask
-    threshold = 0.5
-    preds_binary = (preds_prob > threshold).float()
-    
-    # Compute metrics PER IMAGE then average (more stable)
-    batch_size = preds_binary.shape[0]
-    ious = []
-    f_measures = []
-    
-    for i in range(batch_size):
-        pred_b = preds_binary[i]  # [1, H, W]
-        tgt = targets[i]  # [1, H, W]
-        
-        # IoU per image
-        intersection = (pred_b * tgt).sum()
-        union = pred_b.sum() + tgt.sum() - intersection
-        iou_i = (intersection + 1e-6) / (union + 1e-6)
-        ious.append(iou_i.item())
-        
-        # F-measure per image (beta=0.3 is COD standard)
-        beta = 0.3
-        tp = (pred_b * tgt).sum()
-        fp = (pred_b * (1 - tgt)).sum()
-        fn = ((1 - pred_b) * tgt).sum()
-        precision = (tp + 1e-6) / (tp + fp + 1e-6)
-        recall = (tp + 1e-6) / (tp + fn + 1e-6)
-        f_i = ((1 + beta ** 2) * precision * recall) / (beta ** 2 * precision + recall + 1e-6)
-        f_measures.append(f_i.item())
-    
-    iou = sum(ious) / len(ious)
-    f_measure = sum(f_measures) / len(f_measures)
-    
-    # S-measure (use probability for continuous prediction)
-    s_measure = compute_s_measure(preds_prob, targets)
-    
-    # MAE
-    mae = torch.abs(preds_prob - targets).mean()
+    # Use CODMetrics for all metrics (consistent with evaluate.py)
+    # CODMetrics handles sigmoid check internally
+    all_metrics = metrics_calc.compute_all(preds_prob, targets, threshold=0.5)
     
     return {
-        'val_mae': mae.item(),
-        'val_s_measure': s_measure,
-        'val_f_measure': f_measure,
-        'val_iou': iou
+        'val_mae': all_metrics['MAE'],
+        'val_s_measure': all_metrics['S-measure'],
+        'val_f_measure': all_metrics['F-measure'],
+        'val_iou': all_metrics['IoU']
     }
 
 
