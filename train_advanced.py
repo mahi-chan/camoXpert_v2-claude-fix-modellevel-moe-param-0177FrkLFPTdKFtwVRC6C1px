@@ -523,9 +523,7 @@ def set_router_trainable(model, trainable):
 def compute_metrics(predictions, targets):
     """
     Compute validation metrics for a batch.
-    
-    IMPORTANT: Must compute metrics per-image then average (like evaluate.py).
-    CODMetrics methods sum all pixels, so passing a full batch gives wrong results.
+    Uses adaptive thresholding since model may output soft predictions.
     """
     # Get singleton metrics calculator
     metrics_calc = _get_cod_metrics()
@@ -538,18 +536,6 @@ def compute_metrics(predictions, targets):
     if preds_prob.shape[2:] != targets.shape[2:]:
         preds_prob = F.interpolate(preds_prob, size=targets.shape[2:], mode='bilinear', align_corners=False)
     
-    # DEBUG: Print prediction statistics (first batch only)
-    global _debug_metric_counter
-    if '_debug_metric_counter' not in globals():
-        _debug_metric_counter = 0
-    _debug_metric_counter += 1
-    if _debug_metric_counter <= 3:  # Only first 3 batches
-        pred_bin = (preds_prob > 0.5).float()
-        print(f"\n[DEBUG] Batch {_debug_metric_counter}:")
-        print(f"  Pred prob: min={preds_prob.min():.3f}, max={preds_prob.max():.3f}, mean={preds_prob.mean():.3f}")
-        print(f"  Pred binary ratio: {pred_bin.mean():.3f} (fraction of 1s)")
-        print(f"  Target ratio: {targets.mean():.3f}")
-    
     # Compute metrics PER IMAGE (critical - CODMetrics sums all pixels)
     batch_size = preds_prob.shape[0]
     
@@ -560,19 +546,38 @@ def compute_metrics(predictions, targets):
     s_sum = 0.0
     
     for i in range(batch_size):
-        # Extract single image [1, 1, H, W]
         pred_i = preds_prob[i:i+1]
         tgt_i = targets[i:i+1]
         
-        # Use CODMetrics for each image (like evaluate.py line 434-439)
+        # Adaptive threshold: 2*mean, capped at 0.5
+        # This handles soft predictions better than fixed 0.5
+        adaptive_thresh = min(2.0 * pred_i.mean().item(), 0.5)
+        adaptive_thresh = max(adaptive_thresh, 0.1)  # Floor at 0.1
+        
+        # MAE uses raw probabilities
         mae_sum += metrics_calc.mae(pred_i, tgt_i)
-        iou_sum += metrics_calc.iou(pred_i, tgt_i, threshold=0.5)
-        f_sum += metrics_calc.f_measure(pred_i, tgt_i, threshold=0.5)
+        
+        # S-measure uses raw probabilities  
         s_sum += metrics_calc.s_measure(pred_i, tgt_i)
-    
-    # DEBUG: Print computed values for first batch
-    if _debug_metric_counter <= 3:
-        print(f"  Computed: IoU={iou_sum/batch_size:.4f}, F={f_sum/batch_size:.4f}, S={s_sum/batch_size:.4f}")
+        
+        # IoU and F-measure use adaptive threshold
+        pred_binary = (pred_i > adaptive_thresh).float()
+        
+        # Manual IoU computation with adaptive threshold
+        intersection = (pred_binary * tgt_i).sum()
+        union = pred_binary.sum() + tgt_i.sum() - intersection
+        iou_i = ((intersection + 1e-6) / (union + 1e-6)).item()
+        iou_sum += iou_i
+        
+        # Manual F-measure with adaptive threshold (beta=0.3)
+        tp = (pred_binary * tgt_i).sum()
+        fp = (pred_binary * (1 - tgt_i)).sum()
+        fn = ((1 - pred_binary) * tgt_i).sum()
+        precision = (tp + 1e-6) / (tp + fp + 1e-6)
+        recall = (tp + 1e-6) / (tp + fn + 1e-6)
+        beta = 0.3
+        f_i = (((1 + beta ** 2) * precision * recall) / (beta ** 2 * precision + recall + 1e-6)).item()
+        f_sum += f_i
     
     # Average across batch
     return {
