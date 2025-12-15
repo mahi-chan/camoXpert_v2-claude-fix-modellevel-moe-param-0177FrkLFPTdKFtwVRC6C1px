@@ -1037,6 +1037,12 @@ class OptimizedTrainer:
         for key, value in running_metrics.items():
             metrics[key] = value / max(num_samples, 1)
 
+        # DEBUG: Print local metrics before DDP sync
+        print(f"\n[DEBUG TRAINER] Before DDP sync:")
+        print(f"  num_samples = {num_samples}")
+        for k, v in metrics.items():
+            print(f"  {k} = {v:.4f}")
+
         # Synchronize metrics across DDP ranks for full validation
         if dist.is_initialized():
             # Collect metric sums + val_loss sum + sample count
@@ -1058,6 +1064,12 @@ class OptimizedTrainer:
             for i, key in enumerate(metric_keys):
                 metrics[key] = sync_tensor[i].item() / max(total_samples, 1)
             metrics['val_loss'] = sync_tensor[-2].item() / max(total_samples, 1)
+            
+            # DEBUG: Print after DDP sync  
+            print(f"[DEBUG TRAINER] After DDP sync:")
+            print(f"  total_samples = {total_samples}")
+            for k, v in metrics.items():
+                print(f"  {k} = {v:.4f}")
 
         return metrics
 
