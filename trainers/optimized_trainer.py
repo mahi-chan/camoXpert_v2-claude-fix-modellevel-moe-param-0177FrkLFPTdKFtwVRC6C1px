@@ -1029,6 +1029,9 @@ class OptimizedTrainer:
                         running_metrics['val_f_measure'] = 0.0
                         running_metrics['val_mae'] = 0.0
                         running_metrics['val_s_measure'] = 0.0
+                        # DEBUG: Print first batch_metrics to verify it has val_iou
+                        print(f"[DEBUG] First batch_metrics keys: {list(batch_metrics.keys())}")
+                        print(f"[DEBUG] First batch_metrics values: iou={batch_metrics.get('val_iou')}, f={batch_metrics.get('val_f_measure')}")
                     
                     # Add this batch's contribution (value already averaged per batch)
                     running_metrics['val_iou'] += batch_metrics.get('val_iou', 0.0) * batch_size

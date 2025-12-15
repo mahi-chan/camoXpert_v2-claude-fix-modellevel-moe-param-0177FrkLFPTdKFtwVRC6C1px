@@ -523,8 +523,10 @@ def set_router_trainable(model, trainable):
 def compute_metrics(predictions, targets):
     """
     Compute validation metrics for a batch.
-    SIMPLIFIED - no singletons, pure tensor math, no external state.
+    Uses CODMetrics for S-measure and MAE, simple formulas for IoU and F-measure.
     """
+    from metrics.cod_metrics import CODMetrics
+    
     # Apply sigmoid to convert logits to probabilities
     preds = torch.sigmoid(predictions.detach())
     tgt = targets.detach()
@@ -534,6 +536,7 @@ def compute_metrics(predictions, targets):
         preds = F.interpolate(preds, size=tgt.shape[2:], mode='bilinear', align_corners=False)
     
     batch_size = preds.shape[0]
+    metrics_calc = CODMetrics()
     
     # Accumulators
     mae_total = 0.0
@@ -542,43 +545,52 @@ def compute_metrics(predictions, targets):
     s_total = 0.0
     
     for i in range(batch_size):
-        p = preds[i, 0]  # [H, W]
-        t = tgt[i, 0]    # [H, W]
+        p = preds[i:i+1]  # Keep 4D for CODMetrics
+        t = tgt[i:i+1]
+        p_2d = preds[i, 0]  # 2D for simple calculations
+        t_2d = tgt[i, 0]
         
-        # MAE (Mean Absolute Error)
-        mae_i = torch.abs(p - t).mean().item()
-        mae_total += mae_i
+        # MAE - use CODMetrics (correct implementation)
+        mae_total += metrics_calc.mae(p, t)
         
-        # S-measure: Dice-based structure similarity
-        intersection = (p * t).sum()
-        s_i = ((2 * intersection + 1e-6) / (p.sum() + t.sum() + 1e-6)).item()
-        s_total += s_i
+        # S-measure - use CODMetrics (correct implementation)
+        s_total += metrics_calc.s_measure(p, t)
         
-        # Binary threshold: use standard 0.5 for fair comparison with evaluation
-        p_bin = (p > 0.5).float()
+        # Binary threshold for IoU/F-measure
+        p_bin = (p_2d > 0.5).float()
         
-        # IoU (Intersection over Union)
-        inter = (p_bin * t).sum()
-        union = p_bin.sum() + t.sum() - inter
+        # IoU (Intersection over Union) - simple formula
+        inter = (p_bin * t_2d).sum()
+        union = p_bin.sum() + t_2d.sum() - inter
         iou_i = ((inter + 1e-6) / (union + 1e-6)).item()
         iou_total += iou_i
         
-        # F-measure (beta=0.3)
-        tp = (p_bin * t).sum()
-        fp = (p_bin * (1 - t)).sum()
-        fn = ((1 - p_bin) * t).sum()
+        # F-measure (beta=0.3) - simple formula
+        tp = (p_bin * t_2d).sum()
+        fp = (p_bin * (1 - t_2d)).sum()
+        fn = ((1 - p_bin) * t_2d).sum()
         prec = (tp + 1e-6) / (tp + fp + 1e-6)
         rec = (tp + 1e-6) / (tp + fn + 1e-6)
         beta = 0.3
         f_i = (((1 + beta**2) * prec * rec) / (beta**2 * prec + rec + 1e-6)).item()
         f_total += f_i
     
-    return {
+    result = {
         'val_mae': mae_total / batch_size,
         'val_s_measure': s_total / batch_size,
         'val_iou': iou_total / batch_size,
         'val_f_measure': f_total / batch_size
     }
+    
+    # DEBUG: Print first batch values
+    global _debug_batch_count
+    if '_debug_batch_count' not in globals():
+        _debug_batch_count = 0
+    _debug_batch_count += 1
+    if _debug_batch_count == 1:
+        print(f"[DEBUG compute_metrics] First batch: {result}")
+    
+    return result
 
 
 # Legacy - not used anymore
