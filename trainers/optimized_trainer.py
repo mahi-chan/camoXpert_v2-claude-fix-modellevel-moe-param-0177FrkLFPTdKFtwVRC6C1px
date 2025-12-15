@@ -1023,54 +1023,54 @@ class OptimizedTrainer:
                 if metrics_fn is not None:
                     batch_metrics = metrics_fn(predictions, masks)
                     
-                    # EXPLICIT accumulation - no dict magic
-                    if 'val_iou' not in running_metrics:
-                        running_metrics['val_iou'] = 0.0
-                        running_metrics['val_f_measure'] = 0.0
-                        running_metrics['val_mae'] = 0.0
-                        running_metrics['val_s_measure'] = 0.0
-                        # DEBUG: Print first batch_metrics to verify it has val_iou
-                        print(f"[DEBUG] First batch_metrics keys: {list(batch_metrics.keys())}")
-                        print(f"[DEBUG] First batch_metrics values: iou={batch_metrics.get('val_iou')}, f={batch_metrics.get('val_f_measure')}")
+                    # EXPLICIT LIST ACCUMULATION - bypass float += bug
+                    if 'val_iou_list' not in running_metrics:
+                        running_metrics['val_iou_list'] = []
+                        running_metrics['val_f_measure_list'] = []
+                        running_metrics['val_mae_list'] = []
+                        running_metrics['val_s_measure_list'] = []
                     
-                    # Add this batch's contribution (value already averaged per batch)
-                    running_metrics['val_iou'] += batch_metrics.get('val_iou', 0.0) * batch_size
-                    running_metrics['val_f_measure'] += batch_metrics.get('val_f_measure', 0.0) * batch_size
-                    running_metrics['val_mae'] += batch_metrics.get('val_mae', 0.0) * batch_size
-                    running_metrics['val_s_measure'] += batch_metrics.get('val_s_measure', 0.0) * batch_size
+                    # Store (value, weight) tuples
+                    running_metrics['val_iou_list'].append((batch_metrics.get('val_iou', 0.0), batch_size))
+                    running_metrics['val_f_measure_list'].append((batch_metrics.get('val_f_measure', 0.0), batch_size))
+                    running_metrics['val_mae_list'].append((batch_metrics.get('val_mae', 0.0), batch_size))
+                    running_metrics['val_s_measure_list'].append((batch_metrics.get('val_s_measure', 0.0), batch_size))
 
         # Compute local averages
         avg_loss = val_loss / max(num_samples, 1)
         
-        # Build metrics dict explicitly
+        # Compute weighted sums from lists (bypass float += bug)
+        def weighted_sum(lst):
+            return sum(v * w for v, w in lst)
+        
+        iou_sum = weighted_sum(running_metrics.get('val_iou_list', []))
+        f_sum = weighted_sum(running_metrics.get('val_f_measure_list', []))
+        mae_sum = weighted_sum(running_metrics.get('val_mae_list', []))
+        s_sum = weighted_sum(running_metrics.get('val_s_measure_list', []))
+        
+        # Build metrics dict
         metrics = {
             'val_loss': avg_loss,
-            'val_iou': running_metrics.get('val_iou', 0.0) / max(num_samples, 1),
-            'val_f_measure': running_metrics.get('val_f_measure', 0.0) / max(num_samples, 1),
-            'val_mae': running_metrics.get('val_mae', 0.0) / max(num_samples, 1),
-            'val_s_measure': running_metrics.get('val_s_measure', 0.0) / max(num_samples, 1)
+            'val_iou': iou_sum / max(num_samples, 1),
+            'val_f_measure': f_sum / max(num_samples, 1),
+            'val_mae': mae_sum / max(num_samples, 1),
+            'val_s_measure': s_sum / max(num_samples, 1)
         }
 
         # Synchronize metrics across DDP ranks for full validation
         if dist.is_initialized():
-            # DEBUG: Print running_metrics before sync
-            print(f"[DEBUG SYNC] Before: iou_sum={running_metrics.get('val_iou', 0.0):.6f}, s_sum={running_metrics.get('val_s_measure', 0.0):.2f}")
-            
             # Explicit sync tensor: [iou_sum, f_sum, mae_sum, s_sum, val_loss, num_samples]
             sync_tensor = torch.tensor([
-                running_metrics.get('val_iou', 0.0),
-                running_metrics.get('val_f_measure', 0.0),
-                running_metrics.get('val_mae', 0.0),
-                running_metrics.get('val_s_measure', 0.0),
+                iou_sum,
+                f_sum,
+                mae_sum,
+                s_sum,
                 val_loss,
                 float(num_samples)
             ], device=self.device, dtype=torch.float32)
             
             # All-reduce to sum across ranks
             dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
-            
-            # DEBUG: Print after sync
-            print(f"[DEBUG SYNC] After: iou_sum={sync_tensor[0].item():.6f}, s_sum={sync_tensor[3].item():.2f}, total_samples={sync_tensor[5].item()}")
             
             # Compute global averages
             total_samples = sync_tensor[5].item()

@@ -575,22 +575,12 @@ def compute_metrics(predictions, targets):
         f_i = (((1 + beta**2) * prec * rec) / (beta**2 * prec + rec + 1e-6)).item()
         f_total += f_i
     
-    result = {
+    return {
         'val_mae': mae_total / batch_size,
         'val_s_measure': s_total / batch_size,
         'val_iou': iou_total / batch_size,
         'val_f_measure': f_total / batch_size
     }
-    
-    # DEBUG: Print first batch values
-    global _debug_batch_count
-    if '_debug_batch_count' not in globals():
-        _debug_batch_count = 0
-    _debug_batch_count += 1
-    if _debug_batch_count == 1:
-        print(f"[DEBUG compute_metrics] First batch: {result}")
-    
-    return result
 
 
 # Legacy - not used anymore
