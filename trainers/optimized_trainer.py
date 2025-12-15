@@ -979,122 +979,98 @@ class OptimizedTrainer:
             metrics: Dictionary of validation metrics (synchronized across DDP ranks)
         """
         import torch.distributed as dist
+        import torch.nn.functional as F
         
         self.model.eval()
-
-        val_loss = 0.0
-        num_batches = 0
-        num_samples = 0
-
-        # Accumulate metrics incrementally (not predictions)
-        running_metrics = {}
-
-        # Wrap validation loader with tqdm if available
-        if TQDM_AVAILABLE:
-            val_iter = tqdm(val_loader, desc='Validating', ncols=100, leave=False)
-        else:
-            val_iter = val_loader
-
+        
+        # Simple explicit accumulators - NO DICTS, NO LISTS
+        total_loss = 0.0
+        total_mae = 0.0
+        total_iou = 0.0
+        total_f = 0.0
+        total_s = 0.0
+        total_samples = 0
+        
         with torch.no_grad():
-            for images, masks in val_iter:
+            for images, masks in val_loader:
                 images = images.to(self.device)
                 masks = masks.to(self.device)
                 batch_size = images.size(0)
-
+                
                 # Forward pass
                 with autocast('cuda', enabled=self.use_amp):
                     outputs = self.model(images)
-
-                    # Handle different output formats
                     if isinstance(outputs, dict):
-                        predictions = outputs['predictions']
+                        preds = outputs['predictions']
                     elif isinstance(outputs, tuple):
-                        predictions = outputs[0]
+                        preds = outputs[0]
                     else:
-                        predictions = outputs
-
-                    loss = self.criterion(predictions, masks, input_image=images)
-
-                val_loss += loss.item() * batch_size
-                num_batches += 1
-                num_samples += batch_size
-
-                # Compute metrics for this batch incrementally (memory-efficient)
-                if metrics_fn is not None:
-                    batch_metrics = metrics_fn(predictions, masks)
+                        preds = outputs
                     
-                    # EXPLICIT LIST ACCUMULATION - bypass float += bug
-                    if 'val_iou_list' not in running_metrics:
-                        running_metrics['val_iou_list'] = []
-                        running_metrics['val_f_measure_list'] = []
-                        running_metrics['val_mae_list'] = []
-                        running_metrics['val_s_measure_list'] = []
+                    loss = self.criterion(preds, masks, input_image=images)
+                
+                total_loss += loss.item() * batch_size
+                
+                # Compute metrics INLINE - no external function
+                preds_prob = torch.sigmoid(preds.detach())
+                if preds_prob.shape[2:] != masks.shape[2:]:
+                    preds_prob = F.interpolate(preds_prob, size=masks.shape[2:], mode='bilinear', align_corners=False)
+                
+                for i in range(batch_size):
+                    p = preds_prob[i, 0]  # [H, W]
+                    t = masks[i, 0]       # [H, W]
                     
-                    # Store (value, weight) tuples
-                    running_metrics['val_iou_list'].append((batch_metrics.get('val_iou', 0.0), batch_size))
-                    running_metrics['val_f_measure_list'].append((batch_metrics.get('val_f_measure', 0.0), batch_size))
-                    running_metrics['val_mae_list'].append((batch_metrics.get('val_mae', 0.0), batch_size))
-                    running_metrics['val_s_measure_list'].append((batch_metrics.get('val_s_measure', 0.0), batch_size))
-
+                    # MAE
+                    total_mae += torch.abs(p - t).mean().item()
+                    
+                    # S-measure (Dice-based approximation)
+                    inter_soft = (p * t).sum()
+                    total_s += ((2 * inter_soft + 1e-6) / (p.sum() + t.sum() + 1e-6)).item()
+                    
+                    # Binary mask for IoU/F-measure (0.5 threshold)
+                    p_bin = (p > 0.5).float()
+                    
+                    # IoU
+                    inter_bin = (p_bin * t).sum()
+                    union_bin = p_bin.sum() + t.sum() - inter_bin
+                    total_iou += ((inter_bin + 1e-6) / (union_bin + 1e-6)).item()
+                    
+                    # F-measure (beta=0.3)
+                    tp = (p_bin * t).sum()
+                    fp = (p_bin * (1 - t)).sum()
+                    fn = ((1 - p_bin) * t).sum()
+                    prec = (tp + 1e-6) / (tp + fp + 1e-6)
+                    rec = (tp + 1e-6) / (tp + fn + 1e-6)
+                    beta = 0.3
+                    total_f += (((1 + beta**2) * prec * rec) / (beta**2 * prec + rec + 1e-6)).item()
+                
+                total_samples += batch_size
+        
         # Compute local averages
-        avg_loss = val_loss / max(num_samples, 1)
-        
-        # Compute weighted sums from lists (bypass float += bug)
-        def weighted_sum(lst):
-            return sum(v * w for v, w in lst)
-        
-        iou_list = running_metrics.get('val_iou_list', [])
-        f_list = running_metrics.get('val_f_measure_list', [])
-        mae_list = running_metrics.get('val_mae_list', [])
-        s_list = running_metrics.get('val_s_measure_list', [])
-        
-        # DEBUG: Print first 3 and last 3 values from each list
-        if len(iou_list) > 0:
-            print(f"[DEBUG LISTS] iou_list length={len(iou_list)}")
-            print(f"  First 3: {iou_list[:3]}")
-            print(f"  Last 3: {iou_list[-3:]}")
-        
-        iou_sum = weighted_sum(iou_list)
-        f_sum = weighted_sum(f_list)
-        mae_sum = weighted_sum(mae_list)
-        s_sum = weighted_sum(s_list)
-        
-        print(f"[DEBUG SUMS] iou_sum={iou_sum:.6f}, s_sum={s_sum:.2f}, num_samples={num_samples}")
-        
-        # Build metrics dict
         metrics = {
-            'val_loss': avg_loss,
-            'val_iou': iou_sum / max(num_samples, 1),
-            'val_f_measure': f_sum / max(num_samples, 1),
-            'val_mae': mae_sum / max(num_samples, 1),
-            'val_s_measure': s_sum / max(num_samples, 1)
+            'val_loss': total_loss / max(total_samples, 1),
+            'val_mae': total_mae / max(total_samples, 1),
+            'val_iou': total_iou / max(total_samples, 1),
+            'val_f_measure': total_f / max(total_samples, 1),
+            'val_s_measure': total_s / max(total_samples, 1)
         }
-
-        # Synchronize metrics across DDP ranks for full validation
+        
+        # DDP sync
         if dist.is_initialized():
-            # Explicit sync tensor: [iou_sum, f_sum, mae_sum, s_sum, val_loss, num_samples]
             sync_tensor = torch.tensor([
-                iou_sum,
-                f_sum,
-                mae_sum,
-                s_sum,
-                val_loss,
-                float(num_samples)
+                total_iou, total_f, total_mae, total_s, total_loss, float(total_samples)
             ], device=self.device, dtype=torch.float32)
-            
-            # All-reduce to sum across ranks
             dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
             
-            # Compute global averages
-            total_samples = sync_tensor[5].item()
+            total_all = sync_tensor[5].item()
             metrics = {
-                'val_iou': sync_tensor[0].item() / max(total_samples, 1),
-                'val_f_measure': sync_tensor[1].item() / max(total_samples, 1),
-                'val_mae': sync_tensor[2].item() / max(total_samples, 1),
-                'val_s_measure': sync_tensor[3].item() / max(total_samples, 1),
-                'val_loss': sync_tensor[4].item() / max(total_samples, 1)
+                'val_iou': sync_tensor[0].item() / max(total_all, 1),
+                'val_f_measure': sync_tensor[1].item() / max(total_all, 1),
+                'val_mae': sync_tensor[2].item() / max(total_all, 1),
+                'val_s_measure': sync_tensor[3].item() / max(total_all, 1),
+                'val_loss': sync_tensor[4].item() / max(total_all, 1)
             }
-
+        
         return metrics
 
     def save_checkpoint(
