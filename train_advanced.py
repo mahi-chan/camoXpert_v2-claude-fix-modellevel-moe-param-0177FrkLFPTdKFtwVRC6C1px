@@ -579,12 +579,24 @@ def compute_metrics(predictions, targets):
         f_sum += f_i
     
     # Average across batch
-    return {
+    result = {
         'val_mae': mae_sum / batch_size,
         'val_s_measure': s_sum / batch_size,
         'val_f_measure': f_sum / batch_size,
         'val_iou': iou_sum / batch_size
     }
+    
+    # DEBUG: Print return values for first 3 batches
+    global _compute_metrics_debug_count
+    if '_compute_metrics_debug_count' not in globals():
+        _compute_metrics_debug_count = 0
+    _compute_metrics_debug_count += 1
+    if _compute_metrics_debug_count <= 3:
+        print(f"[DEBUG compute_metrics] Batch {_compute_metrics_debug_count}: iou={result['val_iou']:.6f}, f={result['val_f_measure']:.6f}, s={result['val_s_measure']:.4f}")
+        # Also print prediction stats
+        print(f"  pred: min={preds_prob.min():.3f}, max={preds_prob.max():.3f}, mean={preds_prob.mean():.3f}")
+    
+    return result
 
 
 # Singleton CODMetrics instance for S-measure computation
