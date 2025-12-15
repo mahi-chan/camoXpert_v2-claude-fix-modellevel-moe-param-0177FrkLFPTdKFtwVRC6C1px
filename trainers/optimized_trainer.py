@@ -1053,6 +1053,9 @@ class OptimizedTrainer:
 
         # Synchronize metrics across DDP ranks for full validation
         if dist.is_initialized():
+            # DEBUG: Print running_metrics before sync
+            print(f"[DEBUG SYNC] Before: iou_sum={running_metrics.get('val_iou', 0.0):.6f}, s_sum={running_metrics.get('val_s_measure', 0.0):.2f}")
+            
             # Explicit sync tensor: [iou_sum, f_sum, mae_sum, s_sum, val_loss, num_samples]
             sync_tensor = torch.tensor([
                 running_metrics.get('val_iou', 0.0),
@@ -1065,6 +1068,9 @@ class OptimizedTrainer:
             
             # All-reduce to sum across ranks
             dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
+            
+            # DEBUG: Print after sync
+            print(f"[DEBUG SYNC] After: iou_sum={sync_tensor[0].item():.6f}, s_sum={sync_tensor[3].item():.2f}, total_samples={sync_tensor[5].item()}")
             
             # Compute global averages
             total_samples = sync_tensor[5].item()
