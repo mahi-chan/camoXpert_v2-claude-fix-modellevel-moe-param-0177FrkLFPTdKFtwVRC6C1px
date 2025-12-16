@@ -1036,7 +1036,8 @@ class OptimizedTrainer:
                     # IoU
                     inter_bin = (p_bin * t).sum()
                     union_bin = p_bin.sum() + t.sum() - inter_bin
-                    total_iou += ((inter_bin + 1e-6) / (union_bin + 1e-6)).item()
+                    iou_i = ((inter_bin + 1e-6) / (union_bin + 1e-6)).item()
+                    total_iou += iou_i
                     
                     # F-measure (beta=0.3)
                     tp = (p_bin * t).sum()
@@ -1045,7 +1046,17 @@ class OptimizedTrainer:
                     prec = (tp + 1e-6) / (tp + fp + 1e-6)
                     rec = (tp + 1e-6) / (tp + fn + 1e-6)
                     beta = 0.3
-                    total_f += (((1 + beta**2) * prec * rec) / (beta**2 * prec + rec + 1e-6)).item()
+                    f_i = (((1 + beta**2) * prec * rec) / (beta**2 * prec + rec + 1e-6)).item()
+                    total_f += f_i
+                    
+                    # DEBUG: Print first sample of each batch to diagnose
+                    if i == 0 and total_samples < 5:  # Only first 5 images
+                        print(f"\n  [DEBUG SAMPLE {total_samples}]")
+                        print(f"    p_bin.sum()={p_bin.sum().item():.0f}, t.sum()={t.sum().item():.0f}")
+                        print(f"    inter={inter_bin.item():.0f}, union={union_bin.item():.0f}")
+                        print(f"    tp={tp.item():.0f}, fp={fp.item():.0f}, fn={fn.item():.0f}")
+                        print(f"    prec={prec.item():.6f}, rec={rec.item():.6f}")
+                        print(f"    >>> IoU_i={iou_i:.6f}, F_i={f_i:.6f}, SAME?={abs(iou_i-f_i)<1e-6}")
                 
                 total_samples += batch_size
         
@@ -1057,6 +1068,17 @@ class OptimizedTrainer:
             'val_f_measure': total_f / max(total_samples, 1),
             'val_s_measure': total_s / max(total_samples, 1)
         }
+        
+        # DEBUG: Print raw values to diagnose identical IoU/F-measure issue
+        import torch.distributed as dist
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print(f"\n  [DEBUG METRICS] Raw totals (before avg):")
+            print(f"    total_iou   = {total_iou:.6f}")
+            print(f"    total_f     = {total_f:.6f}")
+            print(f"    total_samples = {total_samples}")
+            print(f"    val_iou   = {metrics['val_iou']:.6f}")
+            print(f"    val_f     = {metrics['val_f_measure']:.6f}")
+            print(f"    IDENTICAL? {abs(metrics['val_iou'] - metrics['val_f_measure']) < 1e-6}")
         
         # DDP sync
         if dist.is_initialized():
