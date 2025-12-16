@@ -58,13 +58,25 @@ def tta_inference(model, images: torch.Tensor, scales: List[float] = [0.75, 1.0,
     B, C, H, W = images.shape
     all_preds = []
     
+    def pad_to_divisible(x, divisor=32):
+        """Pad tensor to make H and W divisible by divisor."""
+        _, _, h, w = x.shape
+        pad_h = (divisor - h % divisor) % divisor
+        pad_w = (divisor - w % divisor) % divisor
+        if pad_h > 0 or pad_w > 0:
+            x = F.pad(x, (0, pad_w, 0, pad_h), mode='reflect')
+        return x, h, w
+    
     for scale in scales:
         # Resize for this scale
         new_h, new_w = int(H * scale), int(W * scale)
         scaled_images = F.interpolate(images, size=(new_h, new_w), mode='bilinear', align_corners=False)
         
+        # Pad to make divisible by 32
+        padded_images, orig_h, orig_w = pad_to_divisible(scaled_images)
+        
         # Forward pass
-        output = model(scaled_images)
+        output = model(padded_images)
         if isinstance(output, dict):
             preds = output.get('pred', output.get('predictions', None))
         elif isinstance(output, (tuple, list)):
@@ -72,13 +84,14 @@ def tta_inference(model, images: torch.Tensor, scales: List[float] = [0.75, 1.0,
         else:
             preds = output
         
-        # Resize back to original size
+        # Remove padding and resize back to original size
+        preds = preds[:, :, :orig_h, :orig_w]
         preds = F.interpolate(preds, size=(H, W), mode='bilinear', align_corners=False)
         all_preds.append(preds)
         
         # Horizontal flip
         if use_flip:
-            flipped = torch.flip(scaled_images, dims=[3])
+            flipped = torch.flip(padded_images, dims=[3])
             output = model(flipped)
             if isinstance(output, dict):
                 preds_flip = output.get('pred', output.get('predictions', None))
@@ -87,7 +100,8 @@ def tta_inference(model, images: torch.Tensor, scales: List[float] = [0.75, 1.0,
             else:
                 preds_flip = output
             
-            # Flip back and resize
+            # Remove padding, flip back and resize
+            preds_flip = preds_flip[:, :, :orig_h, :orig_w]
             preds_flip = torch.flip(preds_flip, dims=[3])
             preds_flip = F.interpolate(preds_flip, size=(H, W), mode='bilinear', align_corners=False)
             all_preds.append(preds_flip)
