@@ -1135,8 +1135,22 @@ class OptimizedTrainer:
         """
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
 
+        # Handle DDP prefix mismatch (DDP checkpoint -> non-DDP model or vice versa)
+        state_dict = checkpoint['model_state_dict']
+        model_is_ddp = hasattr(self.model, 'module')
+        checkpoint_is_ddp = any(k.startswith('module.') for k in state_dict.keys())
+        
+        if checkpoint_is_ddp and not model_is_ddp:
+            # Loading DDP checkpoint into non-DDP model - strip 'module.' prefix
+            print("  [Note] Converting DDP checkpoint to non-DDP format...")
+            state_dict = {k.replace('module.', '', 1): v for k, v in state_dict.items()}
+        elif not checkpoint_is_ddp and model_is_ddp:
+            # Loading non-DDP checkpoint into DDP model - add 'module.' prefix
+            print("  [Note] Converting non-DDP checkpoint to DDP format...")
+            state_dict = {'module.' + k: v for k, v in state_dict.items()}
+        
         # Always load model weights
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model.load_state_dict(state_dict)
 
         if weights_only:
             # Only load model weights, keep fresh optimizer/scheduler
