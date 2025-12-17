@@ -17,7 +17,7 @@ def debug_evaluation():
     print("=" * 60)
     
     # Paths
-    checkpoint_path = "./checkpoints_multiscale/best_model.pth"
+    checkpoint_path = "./checkpoints_fresh/best_model.pth"
     camo_img_dir = Path("./CAMO-V.1.0-CVIU2019/Images/Test")
     camo_gt_dir = Path("./CAMO-V.1.0-CVIU2019/GT")
     
