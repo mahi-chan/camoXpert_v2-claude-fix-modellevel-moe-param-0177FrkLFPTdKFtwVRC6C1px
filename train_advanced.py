@@ -84,9 +84,14 @@ def parse_args():
                         choices=['pvt_v2_b2', 'pvt_v2_b3', 'pvt_v2_b4', 'pvt_v2_b5'],
                         help='Backbone architecture (default: pvt_v2_b2)')
     parser.add_argument('--num-experts', type=int, default=3,
-                        help='Number of experts in MoE (default: 3 - SINet, PraNet, ZoomNet)')
+                        help='Number of experts in MoE (default: 3, auto-set from --expert-types if provided)')
     parser.add_argument('--top-k', type=int, default=2,
                         help='Top-k experts to use (default: 2)')
+    parser.add_argument('--expert-types', type=str, nargs='+', 
+                        default=['sinet', 'pranet', 'zoomnet'],
+                        choices=['sinet', 'pranet', 'zoomnet', 'ujsc', 'frequency', 'fspnet'],
+                        help='Expert types to use (default: sinet pranet zoomnet). '
+                             'Use "fspnet" for lightweight FSPNet-style frequency expert')
     parser.add_argument('--pretrained', action='store_true', default=True,
                         help='Use pretrained backbone weights')
     parser.add_argument('--no-pretrained', action='store_false', dest='pretrained',
@@ -336,10 +341,11 @@ def create_model(args, device, is_main_process):
     model = ModelLevelMoE(
         backbone_name=args.backbone,
         num_experts=args.num_experts,
-            top_k=args.top_k,
-            pretrained=args.pretrained,
-            use_deep_supervision=args.deep_supervision
-        )
+        top_k=args.top_k,
+        pretrained=args.pretrained,
+        use_deep_supervision=args.deep_supervision,
+        expert_types=args.expert_types
+    )
 
     # Store original backbone for multi-scale wrapping
     original_backbone = model.backbone

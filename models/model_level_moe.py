@@ -15,25 +15,36 @@ Architecture:
                     ┌─────────┼─────────┬─────────┐
                     ↓         ↓         ↓         ↓
                  Expert 1  Expert 2  Expert 3  Expert 4
-                 (SINet)   (PraNet)  (ZoomNet)  (UJSC)
+                 (SINet)   (PraNet)  (ZoomNet)  (Frequency)
                  ~15M      ~15M      ~15M      ~15M
+
+Configurable via --expert-types: sinet pranet zoomnet frequency
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import List, Optional
 
 from models.sophisticated_router import SophisticatedRouter
 from models.expert_architectures import (
     SINetExpert,
     PraNetExpert,
     ZoomNetExpert,
-    UJSCExpert
+    UJSCExpert,
+    FEDERFrequencyExpert
 )
-# TDD/GAD/BPN modules removed - not needed with simple structure loss
-# from models.texture_discontinuity import TextureDiscontinuityDetector
-# from models.gradient_anomaly import GradientAnomalyDetector
-# from models.boundary_prior import BoundaryPriorNetwork
+from models.fspnet_expert import FSPNetExpert
+
+# Expert type mapping
+EXPERT_REGISTRY = {
+    'sinet': (SINetExpert, 'SINet-Style'),
+    'pranet': (PraNetExpert, 'PraNet-Style'),
+    'zoomnet': (ZoomNetExpert, 'ZoomNet-Style'),
+    'ujsc': (UJSCExpert, 'UJSC-Style'),
+    'frequency': (FEDERFrequencyExpert, 'FEDER-Frequency-Style'),
+    'fspnet': (FSPNetExpert, 'FSPNet-Frequency-Style'),
+}
 
 
 class ModelLevelMoE(nn.Module):
@@ -48,20 +59,40 @@ class ModelLevelMoE(nn.Module):
     2. Ensemble effect: Different experts handle different image types
     3. Can leverage architectural diversity
     4. Better generalization through specialization
+    
+    Args:
+        backbone_name: Name of the backbone (e.g., 'pvt_v2_b2')
+        num_experts: Number of experts (auto-set from expert_types if provided)
+        top_k: Number of experts to select per forward pass
+        pretrained: Whether to use pretrained backbone
+        use_deep_supervision: Enable deep supervision outputs
+        expert_types: List of expert types to use (e.g., ['sinet', 'pranet', 'frequency'])
     """
 
     def __init__(self, backbone_name='pvt_v2_b2', num_experts=3, top_k=2,
-                 pretrained=True, use_deep_supervision=False):
+                 pretrained=True, use_deep_supervision=False,
+                 expert_types: Optional[List[str]] = None):
         super().__init__()
 
-        self.num_experts = num_experts
+        # Default expert configuration if not specified
+        if expert_types is None:
+            expert_types = ['sinet', 'pranet', 'zoomnet']
+        
+        # Validate expert types
+        for et in expert_types:
+            if et.lower() not in EXPERT_REGISTRY:
+                raise ValueError(f"Unknown expert type: {et}. Available: {list(EXPERT_REGISTRY.keys())}")
+        
+        self.expert_types = [et.lower() for et in expert_types]
+        self.num_experts = len(self.expert_types)
         self.top_k = top_k
         self.use_deep_supervision = use_deep_supervision
 
         print("\n" + "="*70)
         print("MODEL-LEVEL MIXTURE-OF-EXPERTS ENSEMBLE")
         print("="*70)
-        print(f"  Strategy: Router selects top-{top_k} of {num_experts} complete experts")
+        print(f"  Strategy: Router selects top-{top_k} of {self.num_experts} complete experts")
+        print(f"  Expert types: {self.expert_types}")
         print(f"  Target: Beat SOTA (0.78-0.79) → Achieve 0.80-0.81 IoU")
         print("="*70)
 
@@ -80,7 +111,7 @@ class ModelLevelMoE(nn.Module):
         print("\n[2/3] Initializing sophisticated router...")
         self.router = SophisticatedRouter(
             backbone_dims=self.feature_dims,
-            num_experts=num_experts,
+            num_experts=self.num_experts,
             top_k=top_k
         )
         router_params = sum(p.numel() for p in self.router.parameters())
@@ -88,21 +119,18 @@ class ModelLevelMoE(nn.Module):
         print(f"✓ Analyzes: texture, edges, context, frequency, multi-scale")
 
         # ============================================================
-        # EXPERT MODELS: 3 complete architectures
+        # EXPERT MODELS: Dynamically created based on expert_types
         # ============================================================
         print("\n[3/3] Creating expert models...")
 
-        # Three complementary expert architectures
-        self.expert_models = nn.ModuleList([
-            SINetExpert(self.feature_dims),     # Expert 0: Search & Identify
-            PraNetExpert(self.feature_dims),    # Expert 1: Reverse Attention
-            ZoomNetExpert(self.feature_dims),   # Expert 2: Multi-Scale Zoom
-        ])
-
-        expert_names = ["SINet-Style", "PraNet-Style", "ZoomNet-Style"]
-        for i, (name, expert) in enumerate(zip(expert_names, self.expert_models)):
+        self.expert_models = nn.ModuleList()
+        for i, expert_type in enumerate(self.expert_types):
+            expert_cls, expert_name = EXPERT_REGISTRY[expert_type]
+            expert = expert_cls(self.feature_dims)  # All experts take feature_dims
+            
+            self.expert_models.append(expert)
             params = sum(p.numel() for p in expert.parameters())
-            print(f"✓ Expert {i} ({name}): {params/1e6:.1f}M parameters")
+            print(f"✓ Expert {i} ({expert_name}): {params/1e6:.1f}M parameters")
 
         # ============================================================
         # Calculate total parameters
