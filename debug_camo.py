@@ -9,11 +9,12 @@ import cv2
 import sys
 sys.path.insert(0, '.')
 
-from models.model_level_moe import ModelLevelMoE
+# Import the load_checkpoint from evaluate.py to use same loading logic
+from evaluate import load_checkpoint
 
 def debug_evaluation():
     print("=" * 60)
-    print("CAMO Evaluation Debug")
+    print("CAMO Evaluation Debug v2")
     print("=" * 60)
     
     # Paths
@@ -31,24 +32,9 @@ def debug_evaluation():
         print("   ERROR: Checkpoint not found!")
         return
     
-    # Load model
-    print(f"\n2. Loading model...")
-    checkpoint = torch.load(checkpoint_path, map_location='cuda', weights_only=False)
-    print(f"   Checkpoint epoch: {checkpoint.get('epoch', 'unknown')}")
-    
-    model = ModelLevelMoE(backbone_name='pvt_v2_b2', num_experts=3, top_k=2)
-    
-    # Handle DDP prefix
-    state_dict = checkpoint['model_state_dict']
-    new_state_dict = {}
-    for k, v in state_dict.items():
-        if k.startswith('module.'):
-            new_state_dict[k[7:]] = v
-        else:
-            new_state_dict[k] = v
-    
-    model.load_state_dict(new_state_dict)
-    model = model.cuda().eval()
+    # Load model using evaluate.py's function
+    print(f"\n2. Loading model using evaluate.py's load_checkpoint...")
+    model = load_checkpoint(checkpoint_path, device='cuda', backbone='pvt_v2_b2')
     print("   Model loaded successfully!")
     
     # Get sample image
@@ -99,12 +85,17 @@ def debug_evaluation():
         else:
             pred = output
         
+        print(f"   Raw output type: {type(output)}")
+        print(f"   Pred tensor shape: {pred.shape}")
+        print(f"   Pred (before sigmoid): min={pred.min():.4f}, max={pred.max():.4f}, mean={pred.mean():.4f}")
+        
         pred_sigmoid = torch.sigmoid(pred)
     
     pred_np = pred_sigmoid.squeeze().cpu().numpy()
-    print(f"   Prediction (before sigmoid) stats: min={pred.min():.4f}, max={pred.max():.4f}")
-    print(f"   Prediction (after sigmoid) stats: min={pred_np.min():.4f}, max={pred_np.max():.4f}, mean={pred_np.mean():.4f}")
-    print(f"   Prediction > 0.5: {(pred_np > 0.5).sum()} / {pred_np.size}")
+    print(f"   Pred (after sigmoid): min={pred_np.min():.4f}, max={pred_np.max():.4f}, mean={pred_np.mean():.4f}")
+    print(f"   Pred > 0.5: {(pred_np > 0.5).sum()} / {pred_np.size}")
+    print(f"   Pred > 0.3: {(pred_np > 0.3).sum()} / {pred_np.size}")
+    print(f"   Pred > 0.1: {(pred_np > 0.1).sum()} / {pred_np.size}")
     
     # Check IoU manually
     gt_resized = cv2.resize(gt, (img_size, img_size), interpolation=cv2.INTER_NEAREST)
@@ -115,12 +106,21 @@ def debug_evaluation():
     union = pred_binary.sum() + gt_binary.sum() - intersection
     iou = intersection / (union + 1e-6)
     
-    print(f"\n5. Manual IoU calculation:")
+    print(f"\n5. Manual IoU calculation (threshold=0.5):")
     print(f"   GT positive pixels: {gt_binary.sum():.0f}")
     print(f"   Pred positive pixels: {pred_binary.sum():.0f}")
     print(f"   Intersection: {intersection:.0f}")
     print(f"   Union: {union:.0f}")
     print(f"   IoU: {iou:.4f}")
+    
+    # Try different thresholds
+    print(f"\n6. IoU at different thresholds:")
+    for thresh in [0.1, 0.2, 0.3, 0.4, 0.5]:
+        pred_binary = (pred_np > thresh).astype(np.float32)
+        intersection = (pred_binary * gt_binary).sum()
+        union = pred_binary.sum() + gt_binary.sum() - intersection
+        iou = intersection / (union + 1e-6)
+        print(f"   Threshold {thresh}: IoU={iou:.4f}, Pred pixels={pred_binary.sum():.0f}")
     
     # Save prediction for visual check
     pred_save = (pred_np * 255).astype(np.uint8)
@@ -130,6 +130,17 @@ def debug_evaluation():
     # Also save GT for comparison
     Image.fromarray(gt_resized).save("debug_gt.png")
     print(f"   Saved debug_gt.png - please compare!")
+    
+    # Check if predictions might be inverted
+    pred_inverted = 1.0 - pred_np
+    pred_inv_binary = (pred_inverted > 0.5).astype(np.float32)
+    intersection_inv = (pred_inv_binary * gt_binary).sum()
+    union_inv = pred_inv_binary.sum() + gt_binary.sum() - intersection_inv
+    iou_inv = intersection_inv / (union_inv + 1e-6)
+    print(f"\n7. Checking if predictions are inverted:")
+    print(f"   IoU with inverted predictions: {iou_inv:.4f}")
+    if iou_inv > iou:
+        print(f"   ⚠️ INVERTED PREDICTIONS HAVE BETTER IoU! Model might be predicting background.")
 
 if __name__ == "__main__":
     debug_evaluation()
