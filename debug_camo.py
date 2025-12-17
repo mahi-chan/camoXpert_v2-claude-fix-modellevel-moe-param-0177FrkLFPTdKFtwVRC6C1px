@@ -17,7 +17,7 @@ def debug_evaluation():
     print("=" * 60)
     
     # Paths
-    checkpoint_path = "./checkpoints_fresh/best_model.pth"
+    checkpoint_path = "./checkpoints_fresh/latest.pth"
     camo_img_dir = Path("./CAMO-V.1.0-CVIU2019/Images/Test")
     camo_gt_dir = Path("./CAMO-V.1.0-CVIU2019/GT")
     
@@ -36,7 +36,7 @@ def debug_evaluation():
     checkpoint = torch.load(checkpoint_path, map_location='cuda', weights_only=False)
     print(f"   Checkpoint epoch: {checkpoint.get('epoch', 'unknown')}")
     
-    model = ModelLevelMoE(backbone='pvt_v2_b2', num_experts=3, top_k=2)
+    model = ModelLevelMoE(backbone_name='pvt_v2_b2', num_experts=3, top_k=2)
     
     # Handle DDP prefix
     state_dict = checkpoint['model_state_dict']
