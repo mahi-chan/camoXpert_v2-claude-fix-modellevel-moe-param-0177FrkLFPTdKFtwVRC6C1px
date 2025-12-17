@@ -174,6 +174,8 @@ def parse_args():
                         help='Tversky alpha (FP weight) (default: 0.3)')
     parser.add_argument('--tversky-beta', type=float, default=0.7,
                         help='Tversky beta (FN weight) ⭐ HIGH penalizes under-segmentation (default: 0.7)')
+    parser.add_argument('--aux-weight', type=float, default=0.1,
+                        help='MoE load balancing loss weight (default: 0.1, increase to 0.3-0.5 if experts collapse)')
 
     # EMA settings
     parser.add_argument('--use-ema', action='store_true',
@@ -451,7 +453,7 @@ def create_optimizer_and_criterion(model, args, is_main_process):
             dice_weight=1.0,  # Directly optimizes F-measure
             structure_weight=0.5,
             pos_weight=args.pos_weight,
-            aux_weight=0.1,
+            aux_weight=args.aux_weight,
             deep_weight=0.4
         )
         loss_name = "SOTALoss (BCE+IoU×2+Dice+Structure) [AGGRESSIVE]"
