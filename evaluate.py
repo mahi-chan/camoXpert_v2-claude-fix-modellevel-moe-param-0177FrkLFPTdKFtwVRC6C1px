@@ -323,6 +323,27 @@ def load_checkpoint(
         else:
             new_state_dict[k] = v
     
+    # Handle multi-scale checkpoint: backbone.backbone.* -> backbone.*
+    # If checkpoint was trained with --use-multi-scale, backbone is wrapped
+    has_multi_scale = any('backbone.backbone.' in k for k in new_state_dict.keys())
+    if has_multi_scale:
+        print(f"  [Note] Detected multi-scale checkpoint, fixing backbone key prefixes...")
+        fixed_state_dict = {}
+        for k, v in new_state_dict.items():
+            if k.startswith('backbone.backbone.'):
+                # Remove the extra 'backbone.' prefix
+                new_key = 'backbone.' + k[len('backbone.backbone.'):]
+                fixed_state_dict[new_key] = v
+            elif k.startswith('backbone.') and not k.startswith('backbone.backbone'):
+                # Skip multi-scale specific keys (feature_fusion, prediction_heads, etc.)
+                if any(x in k for x in ['feature_fusion', 'prediction_heads', 'loss_module', 'input_generator']):
+                    continue  # Skip these, they don't exist in non-multi-scale model
+                fixed_state_dict[k] = v
+            else:
+                fixed_state_dict[k] = v
+        new_state_dict = fixed_state_dict
+        print(f"  [Note] Fixed multi-scale keys: {len(new_state_dict)} keys remaining")
+    
     # Auto-detect num_experts from checkpoint
     # Look for the FINAL layer in decision_network (largest index with small output dim)
     if num_experts is None:
