@@ -34,6 +34,7 @@ from PIL import Image
 
 # Import model and metrics
 from models.model_level_moe import ModelLevelMoE
+from models.multi_scale_processor import MultiScaleInputProcessor
 from metrics.cod_metrics import CODMetrics
 
 
@@ -323,26 +324,8 @@ def load_checkpoint(
         else:
             new_state_dict[k] = v
     
-    # Handle multi-scale checkpoint: backbone.backbone.* -> backbone.*
-    # If checkpoint was trained with --use-multi-scale, backbone is wrapped
+    # Detect multi-scale checkpoint: look for backbone.backbone.* (multi-scale wraps backbone)
     has_multi_scale = any('backbone.backbone.' in k for k in new_state_dict.keys())
-    if has_multi_scale:
-        print(f"  [Note] Detected multi-scale checkpoint, fixing backbone key prefixes...")
-        fixed_state_dict = {}
-        for k, v in new_state_dict.items():
-            if k.startswith('backbone.backbone.'):
-                # Remove the extra 'backbone.' prefix
-                new_key = 'backbone.' + k[len('backbone.backbone.'):]
-                fixed_state_dict[new_key] = v
-            elif k.startswith('backbone.') and not k.startswith('backbone.backbone'):
-                # Skip multi-scale specific keys (feature_fusion, prediction_heads, etc.)
-                if any(x in k for x in ['feature_fusion', 'prediction_heads', 'loss_module', 'input_generator']):
-                    continue  # Skip these, they don't exist in non-multi-scale model
-                fixed_state_dict[k] = v
-            else:
-                fixed_state_dict[k] = v
-        new_state_dict = fixed_state_dict
-        print(f"  [Note] Fixed multi-scale keys: {len(new_state_dict)} keys remaining")
     
     # Auto-detect num_experts from checkpoint
     # Look for the FINAL layer in decision_network (largest index with small output dim)
@@ -379,6 +362,28 @@ def load_checkpoint(
         pretrained=False
     )
     
+    # If multi-scale checkpoint, wrap backbone with MultiScaleInputProcessor (same as training)
+    if has_multi_scale:
+        print(f"  [Note] Detected multi-scale checkpoint, wrapping backbone with MultiScaleInputProcessor...")
+        
+        # Determine channel list based on backbone
+        if 'pvt_v2' in backbone:
+            channels_list = [64, 128, 320, 512]  # PVT-v2 channels
+        else:
+            channels_list = [64, 128, 320, 512]  # Default
+        
+        # Wrap backbone with MultiScaleInputProcessor (same as train_advanced.py)
+        original_backbone = model.backbone
+        multi_scale_processor = MultiScaleInputProcessor(
+            backbone=original_backbone,
+            channels_list=channels_list,
+            scales=[0.5, 1.0, 1.5],  # Default multi-scale factors
+            use_hierarchical=True
+        )
+        model.backbone = multi_scale_processor
+        
+        print(f"  [Note] Model wrapped with MultiScaleInputProcessor (scales: 0.5, 1.0, 1.5)")
+    
     # Load state dict with strict=False to allow minor mismatches, then verify
     missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
     
@@ -387,6 +392,9 @@ def load_checkpoint(
     if critical_missing:
         print(f"⚠ Missing critical keys: {critical_missing[:5]}...")
     
+    # Show summary of loading
+    if missing_keys:
+        print(f"  Note: {len(missing_keys)} missing keys (usually fine if backbone weights loaded)")
     if unexpected_keys:
         print(f"  Note: {len(unexpected_keys)} unexpected keys in checkpoint (will be ignored)")
     
