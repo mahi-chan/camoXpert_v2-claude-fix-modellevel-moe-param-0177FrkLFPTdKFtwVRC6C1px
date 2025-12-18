@@ -50,7 +50,7 @@ from losses import CombinedLoss  # OLD: Anti-under-segmentation loss
 from losses.boundary_aware_loss import CombinedEnhancedLoss  # Enhanced loss with TDD/GAD/BPN
 from losses.sota_loss import SOTALoss, SOTALossWithTversky  # NEW: SOTA-aligned loss for generalization
 from utils.ema import EMA  # Exponential Moving Average
-from data.dataset import COD10KDataset
+from dataset import COD10KDataset
 from metrics.cod_metrics import CODMetrics
 from models.model_level_moe import ModelLevelMoE
 from models.utils import set_seed
