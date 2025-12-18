@@ -50,15 +50,7 @@ from losses import CombinedLoss  # OLD: Anti-under-segmentation loss
 from losses.boundary_aware_loss import CombinedEnhancedLoss  # Enhanced loss with TDD/GAD/BPN
 from losses.sota_loss import SOTALoss, SOTALossWithTversky  # NEW: SOTA-aligned loss for generalization
 from utils.ema import EMA  # Exponential Moving Average
-try:
-    from dataset_updated import COD10KDataset
-except ImportError:
-    # Fallback if in a subdirectory or running differently
-    try:
-        from data.dataset_updated import COD10KDataset
-    except ImportError:
-        from data.dataset import COD10KDataset
-        print("WARNING: Using original dataset.py (dataset_updated not found)")
+from data.dataset import COD10KDataset
 from metrics.cod_metrics import CODMetrics
 from models.model_level_moe import ModelLevelMoE
 from models.utils import set_seed
