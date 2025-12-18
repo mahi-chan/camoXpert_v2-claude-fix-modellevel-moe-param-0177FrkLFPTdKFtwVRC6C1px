@@ -291,7 +291,8 @@ def load_checkpoint(
     checkpoint_path: str,
     device: str = 'cuda',
     backbone: str = 'pvt_v2_b2',
-    num_experts: Optional[int] = None
+    num_experts: Optional[int] = None,
+    expert_types: Optional[List[str]] = None
 ) -> torch.nn.Module:
     """
     Load model from checkpoint, handling DDP 'module.' prefix.
@@ -359,7 +360,8 @@ def load_checkpoint(
         backbone_name=backbone,
         num_experts=num_experts,
         top_k=2,
-        pretrained=False
+        pretrained=False,
+        expert_types=expert_types
     )
     
     # If multi-scale checkpoint, wrap backbone with MultiScaleInputProcessor (same as training)
@@ -733,6 +735,10 @@ def main():
                         help='Backbone architecture')
     parser.add_argument('--num-experts', type=int, default=None,
                         help='Number of experts (auto-detected if not specified)')
+    parser.add_argument('--expert-types', type=str, nargs='+', 
+                        default=['sinet', 'pranet', 'zoomnet'],
+                        choices=['sinet', 'pranet', 'zoomnet', 'ujsc', 'frequency', 'fspnet'],
+                        help='Expert types to use (must match checkpoint)')
     
     # Explicit path specification (for non-standard datasets like CAMO)
     parser.add_argument('--image-dir', type=str, default=None,
@@ -780,7 +786,8 @@ def main():
         args.checkpoint,
         device=device,
         backbone=args.backbone,
-        num_experts=args.num_experts
+        num_experts=args.num_experts,
+        expert_types=args.expert_types
     )
     
     # Evaluate each dataset
