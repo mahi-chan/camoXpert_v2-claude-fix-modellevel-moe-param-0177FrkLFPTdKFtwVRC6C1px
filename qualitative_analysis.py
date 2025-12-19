@@ -395,7 +395,11 @@ def main():
             
             # Collect routing info
             if 'routing_probs' in routing_info:
-                all_routing_probs.append(routing_info['routing_probs'].cpu().numpy())
+                probs = routing_info['routing_probs'].cpu().numpy()
+                all_routing_probs.append(probs)
+                # Debug: print per-image routing
+                if probs.shape[1] >= 3:
+                    print(f"  {img_path.stem}: E0={probs[0,0]*100:.1f}% E1={probs[0,1]*100:.1f}% E2={probs[0,2]*100:.1f}%")
         
         except Exception as e:
             print(f"Error processing {img_path}: {e}")
