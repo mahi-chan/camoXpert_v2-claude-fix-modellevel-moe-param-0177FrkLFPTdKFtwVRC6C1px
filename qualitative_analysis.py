@@ -310,6 +310,10 @@ def main():
     parser.add_argument('--backbone', type=str, default='pvt_v2_b2', help='Backbone architecture')
     parser.add_argument('--expert-types', nargs='+', default=['sinet', 'pranet', 'zoomnet'],
                        help='Expert types used in training')
+    parser.add_argument('--image-dir', type=str, default=None,
+                       help='Explicit path to images folder (bypasses auto-detection)')
+    parser.add_argument('--gt-dir', type=str, default=None,
+                       help='Explicit path to ground truth folder')
     args = parser.parse_args()
     
     # Setup
@@ -329,14 +333,17 @@ def main():
         device
     )
     
-    # Find images
-    img_dir, gt_dir = find_images(args.data_root, args.dataset)
+    # Find images - use explicit paths if provided
+    if args.image_dir:
+        img_dir = Path(args.image_dir)
+        gt_dir = Path(args.gt_dir) if args.gt_dir else None
+    else:
+        img_dir, gt_dir = find_images(args.data_root, args.dataset)
     
-    if img_dir is None:
-        print(f"⚠ Could not find images in {args.data_root}/{args.dataset}")
-        print("Trying to use data-root directly...")
-        img_dir = Path(args.data_root)
-        gt_dir = None
+    if img_dir is None or not img_dir.exists():
+        print(f"⚠ Could not find images in {args.image_dir or args.data_root}")
+        print("Please provide --image-dir explicitly")
+        return
     
     print(f"Image directory: {img_dir}")
     print(f"GT directory: {gt_dir}")
