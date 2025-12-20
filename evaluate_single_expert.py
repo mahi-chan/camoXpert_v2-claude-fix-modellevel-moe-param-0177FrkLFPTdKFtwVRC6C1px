@@ -5,23 +5,74 @@ import os
 import sys
 import argparse
 import torch
+import cv2
+import numpy as np
 from pathlib import Path
 from tqdm import tqdm
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from train_single_expert import SingleExpertModel, EXPERT_CLASSES, BACKBONE_DIMS
-from dataset import COD10KDataset
 from metrics.cod_metrics import CODMetrics
-from torch.utils.data import DataLoader
+
+
+class SimpleTestDataset:
+    """Simple dataset that loads from explicit image and GT directories."""
+    
+    def __init__(self, image_dir, gt_dir, img_size=448):
+        self.image_dir = image_dir
+        self.gt_dir = gt_dir
+        self.img_size = img_size
+        
+        # Find all images
+        self.image_list = sorted([f for f in os.listdir(image_dir) 
+                                   if f.lower().endswith(('.jpg', '.png', '.jpeg'))])
+        
+        print(f"Found {len(self.image_list)} images in {image_dir}")
+        
+        self.transform = A.Compose([
+            A.Resize(img_size, img_size),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2()
+        ])
+    
+    def __len__(self):
+        return len(self.image_list)
+    
+    def __getitem__(self, idx):
+        img_name = self.image_list[idx]
+        
+        # Load image
+        img_path = os.path.join(self.image_dir, img_name)
+        image = cv2.imread(img_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # Load mask
+        base_name = os.path.splitext(img_name)[0]
+        mask = None
+        for ext in ['.png', '.jpg', '.jpeg', '.PNG', '.JPG']:
+            mask_path = os.path.join(self.gt_dir, base_name + ext)
+            if os.path.exists(mask_path):
+                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                break
+        
+        if mask is None:
+            raise ValueError(f"Mask not found for {img_name}")
+        
+        mask = (mask > 128).astype(np.float32)
+        
+        transformed = self.transform(image=image, mask=mask)
+        return transformed['image'], transformed['mask'].unsqueeze(0)
 
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate Single Expert')
     parser.add_argument('--checkpoint', type=str, required=True)
-    parser.add_argument('--data-root', type=str, required=True)
-    parser.add_argument('--expert', type=str, default=None, 
-                       help='Expert type (auto-detected from checkpoint if not specified)')
+    parser.add_argument('--image-dir', type=str, required=True, help='Path to test images')
+    parser.add_argument('--gt-dir', type=str, required=True, help='Path to ground truth masks')
+    parser.add_argument('--expert', type=str, default=None)
     parser.add_argument('--backbone', type=str, default='pvt_v2_b2')
     parser.add_argument('--img-size', type=int, default=448)
     parser.add_argument('--batch-size', type=int, default=8)
@@ -34,7 +85,6 @@ def main():
     print(f"Loading checkpoint: {args.checkpoint}")
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     
-    # Auto-detect expert type from checkpoint
     expert_type = args.expert or checkpoint.get('expert_type', 'sinet')
     backbone = checkpoint.get('backbone', args.backbone)
     use_multi_scale = checkpoint.get('use_multi_scale', args.use_multi_scale)
@@ -56,21 +106,11 @@ def main():
     model.eval()
     
     # Load dataset
-    print(f"\nLoading test dataset from: {args.data_root}")
-    test_dataset = COD10KDataset(
-        root_dir=args.data_root,
-        split='test',
-        img_size=args.img_size,
-        augment=False,
-        cache_in_memory=False
-    )
-    
-    test_loader = DataLoader(
+    test_dataset = SimpleTestDataset(args.image_dir, args.gt_dir, args.img_size)
+    test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=0, pin_memory=True
     )
-    
-    print(f"Test images: {len(test_dataset)}")
     
     # Evaluate
     metrics = CODMetrics()
@@ -101,3 +141,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
