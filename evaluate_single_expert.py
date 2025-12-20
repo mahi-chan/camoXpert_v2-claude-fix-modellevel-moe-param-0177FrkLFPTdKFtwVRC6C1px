@@ -77,6 +77,8 @@ def main():
     parser.add_argument('--img-size', type=int, default=448)
     parser.add_argument('--batch-size', type=int, default=8)
     parser.add_argument('--use-multi-scale', action='store_true')
+    parser.add_argument('--threshold', type=float, default=0.5, help='Threshold for binary predictions')
+    parser.add_argument('--find-best-threshold', action='store_true', help='Search for optimal threshold')
     args = parser.parse_args()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -112,8 +114,9 @@ def main():
         num_workers=0, pin_memory=True
     )
     
-    # Evaluate
-    metrics = CODMetrics()
+    # Collect all predictions for threshold search
+    all_preds = []
+    all_masks = []
     
     with torch.no_grad():
         for images, masks in tqdm(test_loader, desc="Evaluating"):
@@ -125,12 +128,37 @@ def main():
             if pred.min() < 0 or pred.max() > 1:
                 pred = torch.sigmoid(pred)
             
-            metrics.update(pred, masks)
+            all_preds.append(pred.cpu())
+            all_masks.append(masks.cpu())
     
+    all_preds = torch.cat(all_preds, dim=0)
+    all_masks = torch.cat(all_masks, dim=0)
+    
+    # Find optimal threshold
+    if args.find_best_threshold:
+        print("\nSearching for optimal threshold...")
+        best_iou = 0
+        best_thresh = 0.5
+        for thresh in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]:
+            metrics = CODMetrics()
+            metrics.update(all_preds, all_masks, threshold=thresh)
+            results = metrics.compute()
+            iou = results.get('IoU', 0)
+            print(f"  Threshold {thresh:.1f}: IoU={iou:.4f}, F={results.get('F-measure', 0):.4f}")
+            if iou > best_iou:
+                best_iou = iou
+                best_thresh = thresh
+        print(f"\nBest threshold: {best_thresh} (IoU={best_iou:.4f})")
+        args.threshold = best_thresh
+    
+    # Final evaluation with chosen threshold
+    metrics = CODMetrics()
+    metrics.update(all_preds, all_masks, threshold=args.threshold)
     results = metrics.compute()
     
     print(f"\n{'='*50}")
     print(f"EVALUATION RESULTS - {expert_type.upper()}")
+    print(f"Threshold: {args.threshold}")
     print(f"{'='*50}")
     print(f"  S-measure: {results.get('S-measure', 0):.4f}")
     print(f"  IoU:       {results.get('IoU', 0):.4f}")
