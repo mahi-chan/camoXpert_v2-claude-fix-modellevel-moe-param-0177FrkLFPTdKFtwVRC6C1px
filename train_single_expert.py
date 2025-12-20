@@ -4,12 +4,19 @@ Train Single Expert Script
 Trains ONE expert architecture (SINet, PraNet, or FSPNet) standalone
 to reach SOTA performance, then saves checkpoint for MoE integration.
 
-Uses the same training features as train_advanced.py but for a single expert.
+Uses ALL the same training features as train_advanced.py:
+- Multi-scale processing
+- Progressive augmentation
+- Warmup epochs
+- Cosine annealing LR
+- Gradient clipping
+- AMP training
+- Deep supervision
 
 Usage:
-    python train_single_expert.py --expert sinet --epochs 50 --data-root ./combined_dataset --checkpoint-dir ./checkpoints_sinet
-    python train_single_expert.py --expert pranet --epochs 50 --data-root ./combined_dataset --checkpoint-dir ./checkpoints_pranet  
-    python train_single_expert.py --expert fspnet --epochs 50 --data-root ./combined_dataset --checkpoint-dir ./checkpoints_fspnet
+    python train_single_expert.py --expert sinet --epochs 50 --data-root ./combined_dataset --checkpoint-dir ./checkpoints_sinet --use-multi-scale
+    python train_single_expert.py --expert pranet --epochs 50 --data-root ./combined_dataset --checkpoint-dir ./checkpoints_pranet --use-multi-scale
+    python train_single_expert.py --expert fspnet --epochs 50 --data-root ./combined_dataset --checkpoint-dir ./checkpoints_fspnet --use-multi-scale
 """
 
 import os
@@ -29,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models.expert_architectures import SINetExpert, PraNetExpert, ZoomNetExpert
 from models.fspnet_expert import FSPNetExpert
+from models.multi_scale_processor import MultiScaleInputProcessor
 from losses.sota_loss import SOTALoss
 from dataset import COD10KDataset
 from metrics.cod_metrics import CODMetrics
@@ -55,12 +63,14 @@ BACKBONE_DIMS = {
 class SingleExpertModel(nn.Module):
     """Single expert model with shared backbone for standalone training."""
     
-    def __init__(self, backbone_name: str, expert_type: str, pretrained: bool = True):
+    def __init__(self, backbone_name: str, expert_type: str, pretrained: bool = True,
+                 use_multi_scale: bool = False, multi_scale_factors: list = None):
         super().__init__()
         
         self.backbone_name = backbone_name
         self.expert_type = expert_type
         self.feature_dims = BACKBONE_DIMS.get(backbone_name, [64, 128, 320, 512])
+        self.use_multi_scale = use_multi_scale
         
         # Create backbone using timm (same as ModelLevelMoE)
         self.backbone = timm.create_model(
@@ -74,6 +84,19 @@ class SingleExpertModel(nn.Module):
         if hasattr(self.backbone, 'set_grad_checkpointing'):
             self.backbone.set_grad_checkpointing(True)
         
+        # Wrap with multi-scale processor if enabled
+        if use_multi_scale:
+            if multi_scale_factors is None:
+                multi_scale_factors = [0.75, 1.0, 1.25]
+            
+            self.backbone = MultiScaleInputProcessor(
+                backbone=self.backbone,
+                channels_list=self.feature_dims,
+                scales=multi_scale_factors,
+                use_hierarchical=True
+            )
+            print(f"  ✓ Multi-scale processing enabled: {multi_scale_factors}")
+        
         # Single expert
         expert_class = EXPERT_CLASSES[expert_type]
         self.expert = expert_class(feature_dims=self.feature_dims)
@@ -86,6 +109,7 @@ class SingleExpertModel(nn.Module):
         print(f"Single Expert Model: {expert_type.upper()}")
         print(f"Backbone: {backbone_name} ({backbone_params/1e6:.2f}M params)")
         print(f"Expert: {expert_type} ({expert_params/1e6:.2f}M params)")
+        print(f"Multi-scale: {use_multi_scale}")
         print(f"Total: {(backbone_params + expert_params)/1e6:.2f}M params")
         print(f"{'='*60}\n")
     
@@ -96,18 +120,18 @@ class SingleExpertModel(nn.Module):
         return pred, aux
 
 
-def train_epoch(model, train_loader, criterion, optimizer, scaler, device, epoch, total_epochs, use_amp=True):
-    """Train for one epoch."""
+def train_epoch(model, train_loader, criterion, optimizer, scaler, device, epoch, total_epochs, 
+                use_amp=True, accumulation_steps=1):
+    """Train for one epoch with gradient accumulation."""
     model.train()
     total_loss = 0.0
+    optimizer.zero_grad(set_to_none=True)
     
     pbar = tqdm(train_loader, desc=f"Epoch [{epoch}/{total_epochs}]", leave=True)
     
-    for images, masks in pbar:
+    for batch_idx, (images, masks) in enumerate(pbar):
         images = images.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
-        
-        optimizer.zero_grad(set_to_none=True)
         
         with torch.autocast(device_type='cuda', enabled=use_amp):
             pred, aux_outputs = model(images, return_aux=True)
@@ -128,20 +152,29 @@ def train_epoch(model, train_loader, criterion, optimizer, scaler, device, epoch
                             aux_target = masks
                         weight = 0.4 * (0.7 ** i)
                         loss = loss + weight * criterion(aux_pred, aux_target)
+            
+            # Scale for accumulation
+            loss = loss / accumulation_steps
         
         if use_amp and scaler is not None:
             scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
+            
+            if (batch_idx + 1) % accumulation_steps == 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
+            
+            if (batch_idx + 1) % accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
         
-        total_loss += loss.item()
-        pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+        total_loss += loss.item() * accumulation_steps
+        pbar.set_postfix({'loss': f'{loss.item() * accumulation_steps:.4f}'})
     
     return total_loss / len(train_loader)
 
@@ -169,7 +202,7 @@ def validate(model, val_loader, device):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train Single Expert')
+    parser = argparse.ArgumentParser(description='Train Single Expert (SOTA Strategy)')
     
     # Required
     parser.add_argument('--expert', type=str, required=True, 
@@ -191,8 +224,15 @@ def parse_args():
                        help='Batch size (default: 16)')
     parser.add_argument('--img-size', type=int, default=448,
                        help='Image size (default: 448)')
-    parser.add_argument('--num-workers', type=int, default=4,
-                       help='Number of data loader workers (default: 4)')
+    parser.add_argument('--num-workers', type=int, default=0,
+                       help='Number of data loader workers (default: 0 for Windows)')
+    
+    # Multi-scale (like train_advanced.py)
+    parser.add_argument('--use-multi-scale', action='store_true', default=False,
+                       help='Enable multi-scale processing')
+    parser.add_argument('--multi-scale-factors', nargs='+', type=float,
+                       default=[0.75, 1.0, 1.25],
+                       help='Scale factors for multi-scale processing')
     
     # Training
     parser.add_argument('--epochs', type=int, default=50,
@@ -205,14 +245,18 @@ def parse_args():
                        help='Warmup epochs (default: 10)')
     parser.add_argument('--min-lr', type=float, default=1e-6,
                        help='Minimum learning rate (default: 1e-6)')
-    parser.add_argument('--accumulation-steps', type=int, default=1,
-                       help='Gradient accumulation steps (default: 1)')
+    parser.add_argument('--accumulation-steps', type=int, default=2,
+                       help='Gradient accumulation steps (default: 2)')
     
     # AMP
     parser.add_argument('--use-amp', action='store_true', default=True,
                        help='Use mixed precision training')
     parser.add_argument('--no-amp', action='store_false', dest='use_amp',
                        help='Disable mixed precision')
+    
+    # Augmentation (like train_advanced.py)
+    parser.add_argument('--aug-max-strength', type=float, default=1.0,
+                       help='Maximum augmentation strength')
     
     # Checkpoint
     parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints_expert',
@@ -245,21 +289,28 @@ def main():
     print(f"  Learning rate: {args.lr}")
     print(f"  Weight decay: {args.weight_decay}")
     print(f"  Warmup epochs: {args.warmup_epochs}")
+    print(f"  Accumulation steps: {args.accumulation_steps}")
+    print(f"  Multi-scale: {args.use_multi_scale}")
     print(f"  AMP: {args.use_amp}")
     print(f"{'='*60}\n")
     
-    # Create model
-    model = SingleExpertModel(args.backbone, args.expert, pretrained=args.pretrained)
+    # Create model with multi-scale if enabled
+    model = SingleExpertModel(
+        args.backbone, 
+        args.expert, 
+        pretrained=args.pretrained,
+        use_multi_scale=args.use_multi_scale,
+        multi_scale_factors=args.multi_scale_factors
+    )
     model = model.to(device)
     
     # Dataset (no RAM caching - load from disk)
-    
     train_dataset = COD10KDataset(
         root_dir=args.data_root,
         split='train',
         img_size=args.img_size,
         augment=True,
-        cache_in_memory=False  # Disabled - load from disk each time
+        cache_in_memory=False
     )
     
     val_dataset = COD10KDataset(
@@ -267,7 +318,7 @@ def main():
         split='test',
         img_size=args.img_size,
         augment=False,
-        cache_in_memory=False  # Disabled - load from disk each time
+        cache_in_memory=False
     )
     
     train_loader = DataLoader(
@@ -331,7 +382,7 @@ def main():
         # Train
         train_loss = train_epoch(
             model, train_loader, criterion, optimizer, scaler, device, 
-            epoch, args.epochs, args.use_amp
+            epoch, args.epochs, args.use_amp, args.accumulation_steps
         )
         
         # Step scheduler after warmup
@@ -367,6 +418,7 @@ def main():
                     'best_iou': iou,
                     'expert_type': args.expert,
                     'backbone': args.backbone,
+                    'use_multi_scale': args.use_multi_scale,
                     # Save expert weights separately for easy MoE loading
                     'expert_state_dict': model.expert.state_dict(),
                     'backbone_state_dict': model.backbone.state_dict()
@@ -382,6 +434,7 @@ def main():
                 'best_sm': best_sm,
                 'expert_type': args.expert,
                 'backbone': args.backbone,
+                'use_multi_scale': args.use_multi_scale,
                 'expert_state_dict': model.expert.state_dict(),
                 'backbone_state_dict': model.backbone.state_dict()
             }, checkpoint_dir / f'epoch_{epoch}.pth')
@@ -394,6 +447,7 @@ def main():
             'best_sm': best_sm,
             'expert_type': args.expert,
             'backbone': args.backbone,
+            'use_multi_scale': args.use_multi_scale,
             'expert_state_dict': model.expert.state_dict(),
             'backbone_state_dict': model.backbone.state_dict()
         }, checkpoint_dir / 'latest.pth')

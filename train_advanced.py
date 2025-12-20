@@ -257,24 +257,24 @@ def setup_ddp(args):
 def create_dataloaders(args, is_main_process):
     """Create train and validation dataloaders."""
 
-    # Training dataset - DDP-aware caching: each GPU caches only its subset
+    # Training dataset (no RAM caching - load from disk)
     train_dataset = COD10KDataset(
         root_dir=args.data_root,
         split='train',
         img_size=args.img_size,
         augment=True,  # Built-in augmentations
-        cache_in_memory=args.cache_in_memory,
+        cache_in_memory=False,  # Disabled - load from disk each time
         rank=args.local_rank if args.use_ddp else 0,
         world_size=args.world_size
     )
 
-    # Validation dataset
+    # Validation dataset (no RAM caching - load from disk)
     val_dataset = COD10KDataset(
         root_dir=args.data_root,
         split='test',
         img_size=args.img_size,
         augment=False,
-        cache_in_memory=args.cache_in_memory,
+        cache_in_memory=False,  # Disabled - load from disk each time
         rank=args.local_rank if args.use_ddp else 0,
         world_size=args.world_size
     )
