@@ -258,6 +258,16 @@ def parse_args():
     parser.add_argument('--accumulation-steps', type=int, default=2,
                        help='Gradient accumulation steps (default: 2)')
     
+    # Loss weights (tune for better IoU/F-measure)
+    parser.add_argument('--bce-weight', type=float, default=1.0,
+                       help='BCE loss weight (default: 1.0)')
+    parser.add_argument('--iou-weight', type=float, default=2.0,
+                       help='IoU loss weight (default: 2.0 - higher for better IoU)')
+    parser.add_argument('--dice-weight', type=float, default=2.0,
+                       help='Dice loss weight (default: 2.0 - higher for better F-measure)')
+    parser.add_argument('--structure-weight', type=float, default=0.5,
+                       help='Structure loss weight (default: 0.5)')
+    
     # AMP
     parser.add_argument('--use-amp', action='store_true', default=True,
                        help='Use mixed precision training')
@@ -348,12 +358,12 @@ def main():
     print(f"Train: {len(train_dataset)} images ({len(train_loader)} batches)")
     print(f"Val: {len(val_dataset)} images")
     
-    # Loss (no MoE aux loss for single expert)
+    # Loss with tunable weights (higher IoU/Dice for COD10K)
     criterion = SOTALoss(
-        bce_weight=1.0,
-        iou_weight=1.0,
-        dice_weight=1.0,
-        structure_weight=0.5,
+        bce_weight=args.bce_weight,
+        iou_weight=args.iou_weight,
+        dice_weight=args.dice_weight,
+        structure_weight=args.structure_weight,
         aux_weight=0.0  # No MoE aux loss
     )
     
