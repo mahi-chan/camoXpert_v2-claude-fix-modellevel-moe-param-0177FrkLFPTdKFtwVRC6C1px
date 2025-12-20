@@ -40,6 +40,7 @@ from models.multi_scale_processor import MultiScaleInputProcessor
 from losses.sota_loss import SOTALoss
 from dataset import COD10KDataset
 from metrics.cod_metrics import CODMetrics
+from trainers.optimized_trainer import CODProgressiveAugmentation
 
 
 EXPERT_CLASSES = {
@@ -121,17 +122,26 @@ class SingleExpertModel(nn.Module):
 
 
 def train_epoch(model, train_loader, criterion, optimizer, scaler, device, epoch, total_epochs, 
-                use_amp=True, accumulation_steps=1):
-    """Train for one epoch with gradient accumulation."""
+                use_amp=True, accumulation_steps=1, augmentation=None):
+    """Train for one epoch with gradient accumulation and progressive augmentation."""
     model.train()
     total_loss = 0.0
     optimizer.zero_grad(set_to_none=True)
+    
+    # Update augmentation strength for this epoch
+    if augmentation is not None:
+        augmentation.update_epoch(epoch)
     
     pbar = tqdm(train_loader, desc=f"Epoch [{epoch}/{total_epochs}]", leave=True)
     
     for batch_idx, (images, masks) in enumerate(pbar):
         images = images.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
+        
+        # Apply progressive augmentation (GPU-side)
+        if augmentation is not None and augmentation.current_strength > 0.1:
+            if torch.rand(1).item() < augmentation.current_strength:
+                images, masks = augmentation.apply(images, masks, augmentation_type='random')
         
         with torch.autocast(device_type='cuda', enabled=use_amp):
             pred, aux_outputs = model(images, return_aux=True)
@@ -254,9 +264,13 @@ def parse_args():
     parser.add_argument('--no-amp', action='store_false', dest='use_amp',
                        help='Disable mixed precision')
     
-    # Augmentation (like train_advanced.py)
+    # Progressive augmentation (like train_advanced.py)
+    parser.add_argument('--enable-progressive-aug', action='store_true', default=True,
+                       help='Enable progressive augmentation')
+    parser.add_argument('--aug-transition-epoch', type=int, default=25,
+                       help='Epoch when progressive aug starts increasing (default: 25)')
     parser.add_argument('--aug-max-strength', type=float, default=1.0,
-                       help='Maximum augmentation strength')
+                       help='Maximum augmentation strength (default: 1.0)')
     
     # Checkpoint
     parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints_expert',
@@ -356,6 +370,19 @@ def main():
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs - args.warmup_epochs, eta_min=args.min_lr)
     scaler = torch.GradScaler() if args.use_amp else None
     
+    # Progressive augmentation (for generalization)
+    augmentation = None
+    if args.enable_progressive_aug:
+        augmentation = CODProgressiveAugmentation(
+            initial_strength=0.3,
+            max_strength=args.aug_max_strength,
+            transition_epoch=args.aug_transition_epoch,
+            transition_duration=args.epochs - args.aug_transition_epoch
+        )
+        print(f"\n✓ Progressive augmentation enabled:")
+        print(f"  Transition epoch: {args.aug_transition_epoch}")
+        print(f"  Max strength: {args.aug_max_strength}")
+    
     # Resume
     start_epoch = 0
     best_sm = 0.0
@@ -382,7 +409,7 @@ def main():
         # Train
         train_loss = train_epoch(
             model, train_loader, criterion, optimizer, scaler, device, 
-            epoch, args.epochs, args.use_amp, args.accumulation_steps
+            epoch, args.epochs, args.use_amp, args.accumulation_steps, augmentation
         )
         
         # Step scheduler after warmup
