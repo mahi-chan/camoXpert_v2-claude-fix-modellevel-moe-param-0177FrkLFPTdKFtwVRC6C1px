@@ -255,7 +255,7 @@ def print_results(results: List[Dict], metrics: Dict, expert_names: List[str], o
     for key in ['moe'] + [f'expert_{i}' for i in range(len(expert_names))] + ['oracle']:
         m = metrics[key].compute()
         name = key if key in ['moe', 'oracle'] else expert_names[int(key.split('_')[1])]
-        print(f"{name:<20} {m['sm']:<12.4f} {m['iou']:<12.4f} {m['fm']:<12.4f}")
+        print(f"{name:<20} {m['S-measure']:<12.4f} {m['IoU']:<12.4f} {m['F-measure']:<12.4f}")
     
     print("-"*60)
     
@@ -282,12 +282,12 @@ def print_results(results: List[Dict], metrics: Dict, expert_names: List[str], o
     oracle_metrics = metrics['oracle'].compute()
     
     print("\n📉 Gap Analysis:")
-    print(f"  MoE S-measure:    {moe_metrics['sm']:.4f}")
-    print(f"  Oracle S-measure: {oracle_metrics['sm']:.4f}")
-    print(f"  Gap to Oracle:    {(oracle_metrics['sm'] - moe_metrics['sm'])*100:.2f}%")
+    print(f"  MoE S-measure:    {moe_metrics['S-measure']:.4f}")
+    print(f"  Oracle S-measure: {oracle_metrics['S-measure']:.4f}")
+    print(f"  Gap to Oracle:    {(oracle_metrics['S-measure'] - moe_metrics['S-measure'])*100:.2f}%")
     
     # Find which expert is best overall
-    expert_sm = [metrics[f'expert_{i}'].compute()['sm'] for i in range(len(expert_names))]
+    expert_sm = [metrics[f'expert_{i}'].compute()['S-measure'] for i in range(len(expert_names))]
     best_single = np.argmax(expert_sm)
     best_single_sm = expert_sm[best_single]
     
@@ -301,10 +301,10 @@ def print_results(results: List[Dict], metrics: Dict, expert_names: List[str], o
     
     # Key insight
     print("\n" + "="*80)
-    if moe_metrics['sm'] > best_single_sm:
+    if moe_metrics['S-measure'] > best_single_sm:
         print("✅ MoE OUTPERFORMS best single expert! Novelty validated.")
     else:
-        gap = (best_single_sm - moe_metrics['sm']) * 100
+        gap = (best_single_sm - moe_metrics['S-measure']) * 100
         print(f"⚠️ MoE underperforms best single expert by {gap:.2f}%")
         print("   → Router may need better training or expert diversity")
     print("="*80)
