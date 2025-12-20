@@ -292,7 +292,7 @@ def print_results(results: List[Dict], metrics: Dict, expert_names: List[str], o
     best_single_sm = expert_sm[best_single]
     
     print(f"\n  Best Single Expert: {expert_names[best_single]} ({best_single_sm:.4f})")
-    print(f"  MoE vs Best Single: {(moe_metrics['sm'] - best_single_sm)*100:+.2f}%")
+    print(f"  MoE vs Best Single: {(moe_metrics['S-measure'] - best_single_sm)*100:+.2f}%")
     
     # Save CSV
     csv_path = output_dir / 'ablation_results.csv'
