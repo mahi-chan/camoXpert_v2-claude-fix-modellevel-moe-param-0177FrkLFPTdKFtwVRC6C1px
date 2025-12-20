@@ -193,8 +193,6 @@ def parse_args():
                        help='Image size (default: 448)')
     parser.add_argument('--num-workers', type=int, default=4,
                        help='Number of data loader workers (default: 4)')
-    parser.add_argument('--no-cache', action='store_true',
-                       help='Disable dataset caching')
     
     # Training
     parser.add_argument('--epochs', type=int, default=50,
@@ -254,15 +252,14 @@ def main():
     model = SingleExpertModel(args.backbone, args.expert, pretrained=args.pretrained)
     model = model.to(device)
     
-    # Dataset
-    cache_in_memory = not args.no_cache
+    # Dataset (no RAM caching - load from disk)
     
     train_dataset = COD10KDataset(
         root_dir=args.data_root,
         split='train',
         img_size=args.img_size,
         augment=True,
-        cache_in_memory=cache_in_memory
+        cache_in_memory=False  # Disabled - load from disk each time
     )
     
     val_dataset = COD10KDataset(
@@ -270,7 +267,7 @@ def main():
         split='test',
         img_size=args.img_size,
         augment=False,
-        cache_in_memory=cache_in_memory
+        cache_in_memory=False  # Disabled - load from disk each time
     )
     
     train_loader = DataLoader(
