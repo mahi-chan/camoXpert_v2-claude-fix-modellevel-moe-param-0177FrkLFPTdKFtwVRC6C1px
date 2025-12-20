@@ -224,11 +224,16 @@ def run_ablation(model, img_dir: Path, gt_dir: Path, img_size: int,
         
         results.append(result)
         
-        # Update metrics
-        metrics_calculators['moe'].update(moe_pred_resized, gt)
+        # Update metrics (convert to tensor)
+        moe_tensor = torch.from_numpy(moe_pred_resized).float()
+        gt_tensor = torch.from_numpy(gt).float()
+        
+        metrics_calculators['moe'].update(moe_tensor, gt_tensor)
         for i, pred in enumerate(expert_preds_resized):
-            metrics_calculators[f'expert_{i}'].update(pred, gt)
-        metrics_calculators['oracle'].update(oracle_pred, gt)
+            pred_tensor = torch.from_numpy(pred).float()
+            metrics_calculators[f'expert_{i}'].update(pred_tensor, gt_tensor)
+        oracle_tensor = torch.from_numpy(oracle_pred).float()
+        metrics_calculators['oracle'].update(oracle_tensor, gt_tensor)
     
     return results, metrics_calculators
 
