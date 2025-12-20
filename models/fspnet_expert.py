@@ -221,29 +221,62 @@ class FrequencyDecompositionModule(nn.Module):
 
 class FrequencySpatialCrossAttention(nn.Module):
     """
-    Cross-attention between frequency and spatial domains.
+    FIXED: Proper cross-attention between frequency and spatial domains.
     
-    Allows frequency features to guide spatial attention and vice versa.
+    Uses CBAM-style attention that PRESERVES spatial information instead of
+    losing it through global average pooling.
     """
     def __init__(self, channels: int, num_heads: int = 4):
         super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = channels // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.channels = channels
         
-        # Query, Key, Value projections for frequency
-        self.freq_qkv = nn.Conv2d(channels, channels * 3, 1)
+        # Channel attention for frequency→spatial guidance
+        self.freq_channel_att = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // 4, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // 4, channels, 1),
+            nn.Sigmoid()
+        )
         
-        # Query, Key, Value projections for spatial  
-        self.spatial_qkv = nn.Conv2d(channels, channels * 3, 1)
+        # Spatial attention for frequency→spatial guidance (PRESERVES spatial info)
+        self.freq_spatial_att = nn.Sequential(
+            nn.Conv2d(channels, channels // 4, 1),
+            nn.BatchNorm2d(channels // 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // 4, 1, 7, padding=3),  # Large kernel for spatial context
+            nn.Sigmoid()
+        )
         
-        # Output projections
-        self.freq_proj = nn.Conv2d(channels, channels, 1)
-        self.spatial_proj = nn.Conv2d(channels, channels, 1)
+        # Channel attention for spatial→frequency guidance
+        self.spatial_channel_att = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // 4, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // 4, channels, 1),
+            nn.Sigmoid()
+        )
         
-        # Layer norms
-        self.freq_norm = nn.GroupNorm(1, channels)
-        self.spatial_norm = nn.GroupNorm(1, channels)
+        # Spatial attention for spatial→frequency guidance
+        self.spatial_spatial_att = nn.Sequential(
+            nn.Conv2d(channels, channels // 4, 1),
+            nn.BatchNorm2d(channels // 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // 4, 1, 7, padding=3),
+            nn.Sigmoid()
+        )
+        
+        # Output projections with residual
+        self.freq_proj = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True)
+        )
+        self.spatial_proj = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True)
+        )
     
     def forward(self, freq_feat: torch.Tensor, spatial_feat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -256,20 +289,17 @@ class FrequencySpatialCrossAttention(nn.Module):
             freq_out: Enhanced frequency features
             spatial_out: Enhanced spatial features
         """
-        B, C, H, W = freq_feat.shape
+        # Frequency guides spatial (CBAM-style with spatial preservation)
+        freq_ch_att = self.freq_channel_att(freq_feat)  # [B, C, 1, 1]
+        freq_sp_att = self.freq_spatial_att(freq_feat)  # [B, 1, H, W] - preserves spatial!
+        spatial_attended = spatial_feat * freq_ch_att * freq_sp_att
+        spatial_out = self.spatial_proj(spatial_attended) + spatial_feat  # Residual
         
-        # For efficiency, use channel attention approximation
-        # Full cross-attention would be too expensive
-        
-        # Frequency guides spatial
-        freq_att = torch.sigmoid(self.freq_qkv(freq_feat).mean(dim=(2, 3), keepdim=True))
-        spatial_out = spatial_feat * freq_att[:, :C] + spatial_feat
-        spatial_out = self.spatial_norm(self.spatial_proj(spatial_out))
-        
-        # Spatial guides frequency
-        spatial_att = torch.sigmoid(self.spatial_qkv(spatial_feat).mean(dim=(2, 3), keepdim=True))
-        freq_out = freq_feat * spatial_att[:, :C] + freq_feat
-        freq_out = self.freq_norm(self.freq_proj(freq_out))
+        # Spatial guides frequency (CBAM-style)
+        sp_ch_att = self.spatial_channel_att(spatial_feat)
+        sp_sp_att = self.spatial_spatial_att(spatial_feat)
+        freq_attended = freq_feat * sp_ch_att * sp_sp_att
+        freq_out = self.freq_proj(freq_attended) + freq_feat  # Residual
         
         return freq_out, spatial_out
 

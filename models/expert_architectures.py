@@ -255,12 +255,25 @@ class IdentificationModule(nn.Module):
     """
     Identification Module (IM) - Group-wise enhancement for fine localization
 
-    Uses group convolutions to efficiently enhance discriminative features
+    FIXED: Uses concatenation-based attention instead of weak multiplicative attention.
+    This forces the model to explicitly USE the search guidance.
     """
     def __init__(self, in_channels, groups=4):
         super().__init__()
 
         self.groups = groups
+        self.in_channels = in_channels
+
+        # Attention fusion: concatenate features with search guidance
+        # Input: features [C] + attended_features [C] + search_map_expanded [C] = 3C
+        self.attention_fusion = nn.Sequential(
+            nn.Conv2d(in_channels * 2 + 1, in_channels, 1),  # 2C + 1 (search_map)
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels, in_channels, 3, padding=1),
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True)
+        )
 
         # Group-wise convolution for efficient feature enhancement
         self.group_conv = nn.Sequential(
@@ -303,11 +316,19 @@ class IdentificationModule(nn.Module):
         Returns:
             Enhanced features [B, C, H, W]
         """
-        # Apply search attention
-        attended = x * (1 + search_map)
+        # FIXED: Concatenation-based attention (stronger than multiplicative)
+        # Multiply features with search map
+        attended = x * search_map
+        
+        # Concatenate: original + attended + search_map
+        # This forces the model to explicitly use search guidance
+        fused = torch.cat([x, attended, search_map], dim=1)
+        
+        # Fuse through conv (learns how to combine)
+        fused = self.attention_fusion(fused)
 
         # Group-wise convolution
-        group_features = self.group_conv(attended)
+        group_features = self.group_conv(fused)
 
         # Channel shuffle
         if self.shuffle:

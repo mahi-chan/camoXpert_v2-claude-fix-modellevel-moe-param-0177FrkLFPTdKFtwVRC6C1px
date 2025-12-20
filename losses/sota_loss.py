@@ -199,6 +199,7 @@ class SOTALoss(nn.Module):
         input_image: torch.Tensor = None,
         aux_loss: torch.Tensor = None,
         deep_outputs: list = None,
+        expert_preds: list = None,  # NEW: Per-expert predictions for gradient flow
         **kwargs
     ):
         """
@@ -275,6 +276,36 @@ class SOTALoss(nn.Module):
                     )
             
             total_loss = total_loss + deep_loss
+        
+        # NEW: Per-expert auxiliary loss - ensures ALL experts get gradients
+        # This prevents gradient starvation when router doesn't select certain experts
+        if expert_preds is not None and len(expert_preds) > 0:
+            expert_aux_loss = 0.0
+            per_expert_weight = 0.1  # Small weight to not dominate main loss
+            
+            for expert_pred in expert_preds:
+                if expert_pred is not None:
+                    pred_clamped = torch.clamp(expert_pred.detach(), min=-15, max=15)
+                    # Use detach() on targets to avoid double backprop through router
+                    # But keep expert_pred connected to compute graph
+                    expert_pred_grad = torch.clamp(expert_pred, min=-15, max=15)
+                    
+                    # Resize target if needed
+                    if expert_pred_grad.shape[2:] != targets.shape[2:]:
+                        target_resized = F.interpolate(
+                            targets, size=expert_pred_grad.shape[2:], mode='nearest'
+                        )
+                    else:
+                        target_resized = targets
+                    
+                    # BCE loss for each expert
+                    expert_aux_loss = expert_aux_loss + F.binary_cross_entropy_with_logits(
+                        expert_pred_grad, target_resized
+                    )
+            
+            # Average over experts
+            expert_aux_loss = expert_aux_loss / len(expert_preds)
+            total_loss = total_loss + per_expert_weight * expert_aux_loss
         
         # Return scalar loss for trainer compatibility
         return total_loss

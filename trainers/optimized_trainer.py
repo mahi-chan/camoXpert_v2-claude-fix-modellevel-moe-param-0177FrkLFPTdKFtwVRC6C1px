@@ -824,7 +824,9 @@ class OptimizedTrainer:
                     routing_info = None
 
                 # Compute main loss (pass input_image for frequency-weighted loss)
-                loss = self.criterion(predictions, masks, input_image=images)
+                # Also pass individual expert predictions for per-expert auxiliary loss
+                expert_preds = routing_info.get('individual_expert_preds') if routing_info else None
+                loss = self.criterion(predictions, masks, input_image=images, expert_preds=expert_preds)
 
                 # Add auxiliary loss if available
                 aux_loss = 0.0
