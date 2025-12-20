@@ -253,7 +253,7 @@ def print_results(results: List[Dict], metrics: Dict, expert_names: List[str], o
     print("-"*60)
     
     for key in ['moe'] + [f'expert_{i}' for i in range(len(expert_names))] + ['oracle']:
-        m = metrics[key].get_results()
+        m = metrics[key].compute()
         name = key if key in ['moe', 'oracle'] else expert_names[int(key.split('_')[1])]
         print(f"{name:<20} {m['sm']:<12.4f} {m['iou']:<12.4f} {m['fm']:<12.4f}")
     
@@ -278,8 +278,8 @@ def print_results(results: List[Dict], metrics: Dict, expert_names: List[str], o
         print(f"  {name}: {best} images ({pct:.1f}%)")
     
     # Gap analysis
-    moe_metrics = metrics['moe'].get_results()
-    oracle_metrics = metrics['oracle'].get_results()
+    moe_metrics = metrics['moe'].compute()
+    oracle_metrics = metrics['oracle'].compute()
     
     print("\n📉 Gap Analysis:")
     print(f"  MoE S-measure:    {moe_metrics['sm']:.4f}")
@@ -287,7 +287,7 @@ def print_results(results: List[Dict], metrics: Dict, expert_names: List[str], o
     print(f"  Gap to Oracle:    {(oracle_metrics['sm'] - moe_metrics['sm'])*100:.2f}%")
     
     # Find which expert is best overall
-    expert_sm = [metrics[f'expert_{i}'].get_results()['sm'] for i in range(len(expert_names))]
+    expert_sm = [metrics[f'expert_{i}'].compute()['sm'] for i in range(len(expert_names))]
     best_single = np.argmax(expert_sm)
     best_single_sm = expert_sm[best_single]
     
