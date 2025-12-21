@@ -89,33 +89,49 @@ def load_expert_weights(model: ModelLevelMoE, expert_checkpoints: dict, device: 
             print(f"\n[{i}] {expert_type.upper()}: No checkpoint provided (random init)")
     
     # Load backbone weights from first available checkpoint
+    # The single expert model wraps backbone in MultiScaleInputProcessor which adds
+    # feature_fusion, prediction_heads, loss_module - we need to filter these out
+    backbone_prefixes = ('patch_embed.', 'stages_', 'stages_0.', 'stages_1.', 'stages_2.', 'stages_3.')
+    exclude_prefixes = ('feature_fusion.', 'prediction_heads.', 'loss_module.', 'expert.', 'multi_scale.')
+    
     for expert_type in expert_order:
         if expert_type in expert_checkpoints and expert_checkpoints[expert_type]:
             ckpt_path = expert_checkpoints[expert_type]
             if os.path.exists(ckpt_path):
                 checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+                
+                # Try backbone_state_dict first, then model_state_dict
                 if 'backbone_state_dict' in checkpoint:
-                    backbone_state = checkpoint['backbone_state_dict']
-                    # Handle key prefix mismatch - strip 'backbone.' if present
-                    fixed_state = {}
-                    for k, v in backbone_state.items():
-                        if k.startswith('backbone.'):
-                            fixed_state[k.replace('backbone.', '')] = v
-                        else:
-                            fixed_state[k] = v
-                    model.backbone.load_state_dict(fixed_state)
-                    print(f"\n✓ Loaded backbone weights from: {ckpt_path}")
+                    raw_state = checkpoint['backbone_state_dict']
+                else:
+                    raw_state = checkpoint.get('model_state_dict', {})
+                
+                # Filter and fix keys - only keep actual backbone weights
+                fixed_state = {}
+                for k, v in raw_state.items():
+                    # Strip 'backbone.' prefix if present
+                    clean_key = k.replace('backbone.', '') if k.startswith('backbone.') else k
+                    
+                    # Skip non-backbone keys (MultiScaleInputProcessor layers)
+                    skip = False
+                    for prefix in exclude_prefixes:
+                        if clean_key.startswith(prefix):
+                            skip = True
+                            break
+                    if skip:
+                        continue
+                    
+                    # Only keep keys that look like backbone weights
+                    is_backbone = any(clean_key.startswith(p) for p in backbone_prefixes)
+                    if is_backbone or clean_key in ['norm.weight', 'norm.bias']:
+                        fixed_state[clean_key] = v
+                
+                if fixed_state:
+                    model.backbone.load_state_dict(fixed_state, strict=False)
+                    print(f"\n✓ Loaded backbone weights ({len(fixed_state)} params) from: {ckpt_path}")
                     break
                 else:
-                    # Try loading from model_state_dict
-                    state_dict = checkpoint.get('model_state_dict', {})
-                    backbone_state = {k.replace('backbone.', ''): v 
-                                     for k, v in state_dict.items() 
-                                     if k.startswith('backbone.')}
-                    if backbone_state:
-                        model.backbone.load_state_dict(backbone_state)
-                        print(f"\n✓ Loaded backbone weights from model_state_dict: {ckpt_path}")
-                        break
+                    print(f"\n⚠ No backbone weights found in: {ckpt_path}")
     
     print("="*60 + "\n")
     
