@@ -265,24 +265,26 @@ def main():
         root_dir=args.data_root,
         split='train',
         img_size=args.img_size,
-        augment=True
+        augment=True,
+        cache_in_memory=False
     )
     
     val_dataset = COD10KDataset(
         root_dir=args.data_root,
         split='test',
         img_size=args.img_size,
-        augment=False
+        augment=False,
+        cache_in_memory=False
     )
     
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
-        num_workers=4, pin_memory=True
+        num_workers=0, pin_memory=True, drop_last=True
     )
     
     val_loader = DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
-        num_workers=4, pin_memory=True
+        num_workers=0, pin_memory=True
     )
     
     print(f"Train: {len(train_dataset)} images")

@@ -267,6 +267,8 @@ def parse_args():
                        help='Dice loss weight (default: 2.0 - higher for better F-measure)')
     parser.add_argument('--structure-weight', type=float, default=0.5,
                        help='Structure loss weight (default: 0.5)')
+    parser.add_argument('--pos-weight', type=float, default=5.0,
+                       help='Foreground weight in BCE (default: 5.0 - handles class imbalance)')
     
     # AMP
     parser.add_argument('--use-amp', action='store_true', default=True,
@@ -364,6 +366,7 @@ def main():
         iou_weight=args.iou_weight,
         dice_weight=args.dice_weight,
         structure_weight=args.structure_weight,
+        pos_weight=args.pos_weight,
         aux_weight=0.0  # No MoE aux loss
     )
     
