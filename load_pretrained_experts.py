@@ -95,9 +95,27 @@ def load_expert_weights(model: ModelLevelMoE, expert_checkpoints: dict, device: 
             if os.path.exists(ckpt_path):
                 checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
                 if 'backbone_state_dict' in checkpoint:
-                    model.backbone.load_state_dict(checkpoint['backbone_state_dict'])
+                    backbone_state = checkpoint['backbone_state_dict']
+                    # Handle key prefix mismatch - strip 'backbone.' if present
+                    fixed_state = {}
+                    for k, v in backbone_state.items():
+                        if k.startswith('backbone.'):
+                            fixed_state[k.replace('backbone.', '')] = v
+                        else:
+                            fixed_state[k] = v
+                    model.backbone.load_state_dict(fixed_state)
                     print(f"\n✓ Loaded backbone weights from: {ckpt_path}")
                     break
+                else:
+                    # Try loading from model_state_dict
+                    state_dict = checkpoint.get('model_state_dict', {})
+                    backbone_state = {k.replace('backbone.', ''): v 
+                                     for k, v in state_dict.items() 
+                                     if k.startswith('backbone.')}
+                    if backbone_state:
+                        model.backbone.load_state_dict(backbone_state)
+                        print(f"\n✓ Loaded backbone weights from model_state_dict: {ckpt_path}")
+                        break
     
     print("="*60 + "\n")
     
