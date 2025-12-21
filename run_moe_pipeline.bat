@@ -2,9 +2,9 @@
 REM Run MoE training pipeline - stops on any error
 
 echo ============================================================
-echo STEP 1: Router-only training (30 epochs)
+echo STEP 1: Router-only training (50 epochs)
 echo ============================================================
-python load_pretrained_experts.py --sinet-checkpoint ./checkpoints_sinet/best_model.pth --pranet-checkpoint ./checkpoints_pranet/best_model.pth --fspnet-checkpoint ./checkpoints_fspnet/best_model.pth --expert-types sinet pranet fspnet --mode router-only --data-root ./combined_dataset --backbone pvt_v2_b2 --epochs 30 --batch-size 16 --img-size 448 --lr 1e-4 --output-dir ./checkpoints_moe_router --val-freq 5
+python load_pretrained_experts.py --sinet-checkpoint ./checkpoints_sinet/best_model.pth --pranet-checkpoint ./checkpoints_pranet/best_model.pth --fspnet-checkpoint ./checkpoints_fspnet/best_model.pth --expert-types sinet pranet fspnet --mode router-only --data-root ./combined_dataset --backbone pvt_v2_b2 --epochs 50 --batch-size 16 --img-size 448 --lr 1e-4 --output-dir ./checkpoints_moe_router --val-freq 1
 if %errorlevel% neq 0 (
     echo ERROR: Step 1 failed!
     pause
@@ -28,9 +28,9 @@ if %errorlevel% neq 0 (
 )
 
 echo ============================================================
-echo STEP 4: Full fine-tuning (50 epochs)
+echo STEP 4: Full fine-tuning (100 epochs)
 echo ============================================================
-python load_pretrained_experts.py --sinet-checkpoint ./checkpoints_sinet/best_model.pth --pranet-checkpoint ./checkpoints_pranet/best_model.pth --fspnet-checkpoint ./checkpoints_fspnet/best_model.pth --expert-types sinet pranet fspnet --mode full --data-root ./combined_dataset --backbone pvt_v2_b2 --epochs 50 --batch-size 16 --img-size 448 --lr 1e-5 --output-dir ./checkpoints_moe_finetuned --val-freq 5
+python load_pretrained_experts.py --sinet-checkpoint ./checkpoints_sinet/best_model.pth --pranet-checkpoint ./checkpoints_pranet/best_model.pth --fspnet-checkpoint ./checkpoints_fspnet/best_model.pth --expert-types sinet pranet fspnet --mode full --data-root ./combined_dataset --backbone pvt_v2_b2 --epochs 100 --batch-size 16 --img-size 448 --lr 1e-5 --output-dir ./checkpoints_moe_finetuned --val-freq 1
 if %errorlevel% neq 0 (
     echo ERROR: Step 4 failed!
     pause
