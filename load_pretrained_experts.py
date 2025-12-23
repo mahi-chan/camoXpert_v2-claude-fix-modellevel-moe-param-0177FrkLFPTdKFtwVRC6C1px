@@ -324,8 +324,15 @@ def main():
     print(f"Train: {len(train_dataset)} images")
     print(f"Val: {len(val_dataset)} images")
     
-    # Loss and optimizer
-    criterion = SOTALoss(aux_weight=0.5)
+    # Loss and optimizer - higher IoU/Dice weights for better metrics
+    criterion = SOTALoss(
+        bce_weight=1.0,
+        iou_weight=2.0,
+        dice_weight=2.0,
+        structure_weight=0.5,
+        pos_weight=5.0,
+        aux_weight=0.5
+    )
     
     # Only optimize unfrozen parameters
     trainable_params = [p for p in model.parameters() if p.requires_grad]
