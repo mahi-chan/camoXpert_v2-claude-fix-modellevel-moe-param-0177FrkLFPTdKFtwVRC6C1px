@@ -226,7 +226,8 @@ def parse_args():
     
     # Required
     parser.add_argument('--expert', type=str, required=True, 
-                       choices=['sinet', 'pranet', 'zoomnet', 'fspnet'],
+                       choices=['sinet', 'pranet', 'zoomnet', 'fspnet', 
+                               'basnet', 'cpd', 'gcpanet', 'zoomnext'],
                        help='Expert type to train')
     parser.add_argument('--data-root', type=str, required=True,
                        help='Path to dataset root')

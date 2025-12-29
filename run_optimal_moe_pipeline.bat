@@ -30,20 +30,20 @@ if exist ".\checkpoints_fspnet\best_model.pth" (
     echo FSPNet already trained, skipping...
 ) else (
     python train_single_expert.py ^
-        --expert-type fspnet ^
+        --expert fspnet ^
         --data-root ./combined_dataset ^
         --backbone pvt_v2_b2 ^
         --epochs 100 ^
         --batch-size 16 ^
         --img-size 448 ^
         --lr 1e-4 ^
-        --output-dir ./checkpoints_fspnet ^
+        --checkpoint-dir ./checkpoints_fspnet ^
         --val-freq 5 ^
         --iou-weight 2.0 ^
         --dice-weight 2.0 ^
         --pos-weight 5.0 ^
-        --use-progressive-aug ^
-        --multi-scale
+        --enable-progressive-aug ^
+        --use-multi-scale
     if %errorlevel% neq 0 (
         echo ERROR: FSPNet training failed!
         pause
@@ -65,20 +65,20 @@ if exist ".\checkpoints_zoomnext\best_model.pth" (
     echo ZoomNeXt already trained, skipping...
 ) else (
     python train_single_expert.py ^
-        --expert-type zoomnext ^
+        --expert zoomnext ^
         --data-root ./combined_dataset ^
         --backbone pvt_v2_b2 ^
         --epochs 100 ^
         --batch-size 12 ^
         --img-size 512 ^
         --lr 1e-4 ^
-        --output-dir ./checkpoints_zoomnext ^
+        --checkpoint-dir ./checkpoints_zoomnext ^
         --val-freq 5 ^
         --iou-weight 3.0 ^
         --dice-weight 2.0 ^
         --pos-weight 3.0 ^
-        --use-progressive-aug ^
-        --multi-scale
+        --enable-progressive-aug ^
+        --use-multi-scale
     if %errorlevel% neq 0 (
         echo ERROR: ZoomNeXt training failed!
         pause
@@ -100,20 +100,20 @@ if exist ".\checkpoints_pranet\best_model.pth" (
     echo PraNet already trained, skipping...
 ) else (
     python train_single_expert.py ^
-        --expert-type pranet ^
+        --expert pranet ^
         --data-root ./combined_dataset ^
         --backbone pvt_v2_b2 ^
         --epochs 100 ^
         --batch-size 16 ^
         --img-size 448 ^
         --lr 1e-4 ^
-        --output-dir ./checkpoints_pranet ^
+        --checkpoint-dir ./checkpoints_pranet ^
         --val-freq 5 ^
         --iou-weight 2.0 ^
         --dice-weight 3.0 ^
         --pos-weight 7.0 ^
-        --use-progressive-aug ^
-        --multi-scale
+        --enable-progressive-aug ^
+        --use-multi-scale
     if %errorlevel% neq 0 (
         echo ERROR: PraNet training failed!
         pause
@@ -132,15 +132,15 @@ echo ============================================================
 
 echo.
 echo --- Evaluating FSPNet ---
-python evaluate_single_expert.py --checkpoint ./checkpoints_fspnet/best_model.pth --expert-type fspnet --image-dir "./CAMO-V.1.0-CVIU2019/Images/Test" --gt-dir "./CAMO-V.1.0-CVIU2019/GT" --find-best-threshold
+python evaluate_single_expert.py --checkpoint ./checkpoints_fspnet/best_model.pth --expert fspnet --image-dir "./CAMO-V.1.0-CVIU2019/Images/Test" --gt-dir "./CAMO-V.1.0-CVIU2019/GT" --find-best-threshold
 
 echo.
 echo --- Evaluating ZoomNeXt ---
-python evaluate_single_expert.py --checkpoint ./checkpoints_zoomnext/best_model.pth --expert-type zoomnext --image-dir "./CAMO-V.1.0-CVIU2019/Images/Test" --gt-dir "./CAMO-V.1.0-CVIU2019/GT" --find-best-threshold
+python evaluate_single_expert.py --checkpoint ./checkpoints_zoomnext/best_model.pth --expert zoomnext --image-dir "./CAMO-V.1.0-CVIU2019/Images/Test" --gt-dir "./CAMO-V.1.0-CVIU2019/GT" --find-best-threshold
 
 echo.
 echo --- Evaluating PraNet ---
-python evaluate_single_expert.py --checkpoint ./checkpoints_pranet/best_model.pth --expert-type pranet --image-dir "./CAMO-V.1.0-CVIU2019/Images/Test" --gt-dir "./CAMO-V.1.0-CVIU2019/GT" --find-best-threshold
+python evaluate_single_expert.py --checkpoint ./checkpoints_pranet/best_model.pth --expert pranet --image-dir "./CAMO-V.1.0-CVIU2019/Images/Test" --gt-dir "./CAMO-V.1.0-CVIU2019/GT" --find-best-threshold
 
 REM ============================================================
 REM PHASE 3: TRAIN 3-EXPERT MoE
