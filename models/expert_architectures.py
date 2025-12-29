@@ -10,6 +10,9 @@ Core Concepts Implemented:
 - ZoomNet: Multi-kernel zoom (details + context) + aggregation
 - UJSC: Uncertainty-guided refinement + boundary enhancement
 - FEDER: Frequency Expert with Dynamic Edge Reconstruction
+- BASNet: Boundary-Aware Segmentation with Residual Refinement
+- CPD: Cascaded Partial Decoder for Multi-Scale Objects
+- GCPANet: Global Context-aware Progressive Aggregation
 
 All experts use deep supervision for better training.
 """
@@ -18,6 +21,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.frequency_expert import MultiScaleFrequencyExpert
+from models.basnet_expert import BASNetExpert
+from models.cpd_expert import CPDExpert
+from models.gcpanet_expert import GCPANetExpert
 
 
 # ============================================================
@@ -1755,7 +1761,10 @@ if __name__ == '__main__':
         ("PraNet-Inspired", PraNetExpert()),
         ("ZoomNet-Inspired", ZoomNetExpert()),
         ("UJSC-Inspired", UJSCExpert()),
-        ("FEDER (Frequency Expert)", FEDERFrequencyExpert())
+        ("FEDER (Frequency Expert)", FEDERFrequencyExpert()),
+        ("BASNet (Boundary-Aware)", BASNetExpert()),
+        ("CPD (Cascaded Partial Decoder)", CPDExpert()),
+        ("GCPANet (Global Context)", GCPANetExpert())
     ]
 
     for name, expert in experts:

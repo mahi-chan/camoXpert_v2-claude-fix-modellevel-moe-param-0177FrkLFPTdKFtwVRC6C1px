@@ -7,18 +7,18 @@ This is a TRUE ensemble approach where:
 3. Each expert produces a full prediction
 4. Predictions are combined with learned weights
 
-Target Performance: 0.80-0.81 IoU (beats SOTA at 0.78-0.79)
+Target Performance: 0.85-0.90 IoU (beats SOTA at 0.78-0.79)
 
 Architecture:
   Input → Shared Backbone → Router → Select Experts → Combine Predictions → Output
                               ↓
-                    ┌─────────┼─────────┬─────────┐
-                    ↓         ↓         ↓         ↓
-                 Expert 1  Expert 2  Expert 3  Expert 4
-                 (SINet)   (PraNet)  (ZoomNet)  (Frequency)
-                 ~15M      ~15M      ~15M      ~15M
+                    ┌─────────┼─────────┬─────────┬─────────┐
+                    ↓         ↓         ↓         ↓         ↓
+                 Expert 1  Expert 2  Expert 3  Expert 4  Expert 5
+                 (FSPNet) (PraNet)  (BASNet)  (CPD)    (GCPANet)
+                  ~20M      ~15M      ~20M     ~15M      ~18M
 
-Configurable via --expert-types: sinet pranet zoomnet frequency
+Configurable via --expert-types: sinet pranet fspnet basnet cpd gcpanet
 """
 
 import torch
@@ -32,11 +32,15 @@ from models.expert_architectures import (
     PraNetExpert,
     ZoomNetExpert,
     UJSCExpert,
-    FEDERFrequencyExpert
+    FEDERFrequencyExpert,
+    BASNetExpert,
+    CPDExpert,
+    GCPANetExpert
 )
 from models.fspnet_expert import FSPNetExpert
+from models.zoomnext_expert import ZoomNeXtExpert
 
-# Expert type mapping
+# Expert type mapping - includes all experts
 EXPERT_REGISTRY = {
     'sinet': (SINetExpert, 'SINet-Style'),
     'pranet': (PraNetExpert, 'PraNet-Style'),
@@ -44,6 +48,12 @@ EXPERT_REGISTRY = {
     'ujsc': (UJSCExpert, 'UJSC-Style'),
     'frequency': (FEDERFrequencyExpert, 'FEDER-Frequency-Style'),
     'fspnet': (FSPNetExpert, 'FSPNet-Frequency-Style'),
+    # New diverse experts for better MoE performance
+    'basnet': (BASNetExpert, 'BASNet-Boundary-Style'),
+    'cpd': (CPDExpert, 'CPD-MultiScale-Style'),
+    'gcpanet': (GCPANetExpert, 'GCPANet-GlobalContext-Style'),
+    # SOTA TPAMI 2024
+    'zoomnext': (ZoomNeXtExpert, 'ZoomNeXt-TPAMI2024-Style'),
 }
 
 

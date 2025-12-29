@@ -34,8 +34,12 @@ import timm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from models.expert_architectures import SINetExpert, PraNetExpert, ZoomNetExpert
+from models.expert_architectures import (
+    SINetExpert, PraNetExpert, ZoomNetExpert,
+    BASNetExpert, CPDExpert, GCPANetExpert
+)
 from models.fspnet_expert import FSPNetExpert
+from models.zoomnext_expert import ZoomNeXtExpert
 from models.multi_scale_processor import MultiScaleInputProcessor
 from losses.sota_loss import SOTALoss
 from dataset import COD10KDataset
@@ -47,7 +51,13 @@ EXPERT_CLASSES = {
     'sinet': SINetExpert,
     'pranet': PraNetExpert,
     'zoomnet': ZoomNetExpert,
-    'fspnet': FSPNetExpert
+    'fspnet': FSPNetExpert,
+    # New diverse experts
+    'basnet': BASNetExpert,
+    'cpd': CPDExpert,
+    'gcpanet': GCPANetExpert,
+    # SOTA TPAMI 2024
+    'zoomnext': ZoomNeXtExpert,
 }
 
 BACKBONE_DIMS = {

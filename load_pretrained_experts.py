@@ -232,6 +232,12 @@ def main():
     parser.add_argument('--pranet-checkpoint', type=str, default=None)
     parser.add_argument('--fspnet-checkpoint', type=str, default=None)
     parser.add_argument('--zoomnet-checkpoint', type=str, default=None)
+    # New diverse experts
+    parser.add_argument('--basnet-checkpoint', type=str, default=None)
+    parser.add_argument('--cpd-checkpoint', type=str, default=None)
+    parser.add_argument('--gcpanet-checkpoint', type=str, default=None)
+    # SOTA TPAMI 2024
+    parser.add_argument('--zoomnext-checkpoint', type=str, default=None)
     parser.add_argument('--expert-types', nargs='+', default=['sinet', 'pranet', 'fspnet'])
     parser.add_argument('--mode', type=str, choices=['router-only', 'full', 'save-only'], 
                        default='router-only',
@@ -262,12 +268,18 @@ def main():
         expert_types=args.expert_types
     )
     
-    # Build checkpoint dict
+    # Build checkpoint dict with all expert types
     expert_checkpoints = {
         'sinet': args.sinet_checkpoint,
         'pranet': args.pranet_checkpoint,
         'fspnet': args.fspnet_checkpoint,
-        'zoomnet': args.zoomnet_checkpoint
+        'zoomnet': args.zoomnet_checkpoint,
+        # New experts
+        'basnet': args.basnet_checkpoint,
+        'cpd': args.cpd_checkpoint,
+        'gcpanet': args.gcpanet_checkpoint,
+        # SOTA
+        'zoomnext': args.zoomnext_checkpoint,
     }
     
     # Load pre-trained weights
